@@ -1,0 +1,18 @@
+#!/usr/bin/env stryke
+# examples/sqs_pump.stk — read messages from an SQS queue and process them.
+# Run:   s examples/sqs_pump.stk https://sqs.us-east-1.amazonaws.com/.../my-queue
+
+use AWS::SQS
+
+my $queue = $ARGV[0]
+die "usage: sqs_pump.stk QUEUE_URL\n" unless defined $queue
+
+my $n = AWS::SQS::pump $queue,
+    iterations => 5,
+    max        => 10,
+    wait       => 20,
+    callback   => sub ($m) {
+        p "processing $m->{message_id}: " . substr($m->{body}, 0, 80)
+        # ... do work ...
+    }
+p "processed $n messages"

@@ -1,0 +1,34 @@
+# lib/Lambda.stk — `use AWS::Lambda`
+
+package AWS::Lambda
+
+use AWS
+
+# Sync invoke. Returns { status_code, function_error, executed_version, log_tail, payload }.
+# $payload is a hashref / arrayref / scalar that will be encoded as JSON
+# for the function. Pass `invocation_type => "event"` for fire-and-forget.
+fn AWS::Lambda::invoke ($name, $payload, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "lambda", "invoke", AWS::_shq($name)
+    push @argv, "--payload", AWS::_shq(to_json $payload)
+    push @argv, "--invocation-type", AWS::_shq($opts{invocation_type}) if defined $opts{invocation_type}
+    push @argv, "--qualifier",       AWS::_shq($opts{qualifier})       if defined $opts{qualifier}
+    push @argv, "--log-tail" if $opts{log_tail}
+    AWS::_run_json(\@argv)
+}
+
+# Convenience: sync invoke, return just the payload hash (or undef when
+# function_error fires).
+fn AWS::Lambda::call ($name, $payload, %opts) {
+    my $r = AWS::Lambda::invoke($name, $payload, %opts)
+    return undef if defined $r->{function_error}
+    $r->{payload}
+}
+
+fn AWS::Lambda::list (%opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "lambda", "list"
+    AWS::_run_ndjson(\@argv)
+}
+
+1

@@ -1,0 +1,17 @@
+#!/usr/bin/env stryke
+# examples/s3_browse.stk — list a bucket prefix, print key + size.
+# Run:   s examples/s3_browse.stk s3://my-bucket/some/prefix
+
+use AWS::S3
+
+my $uri = $ARGV[0]
+die "usage: s3_browse.stk s3://bucket/prefix\n" unless defined $uri
+
+my @entries = AWS::S3::ls $uri, delimiter => "/"
+for my $e (@entries) {
+    if ($e->{type} eq "prefix") {
+        p "  [dir] $e->{key}"
+    } else {
+        p sprintf("  [obj] %10d  %s", $e->{size}, $e->{key})
+    }
+}

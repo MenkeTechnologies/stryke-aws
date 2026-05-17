@@ -1,0 +1,73 @@
+# lib/SQS.stk — `use AWS::SQS`
+
+package AWS::SQS
+
+use AWS
+
+# Send a single message.
+# Returns { message_id, md5_of_body, sequence_number? }.
+fn AWS::SQS::send ($queue, $body, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "sqs", "send", AWS::_shq($queue), "--body", AWS::_shq($body)
+    push @argv, "--delay-seconds", AWS::_shq($opts{delay_seconds}) if defined $opts{delay_seconds}
+    push @argv, "--dedup-id",      AWS::_shq($opts{dedup_id})      if defined $opts{dedup_id}
+    push @argv, "--group-id",      AWS::_shq($opts{group_id})      if defined $opts{group_id}
+    AWS::_run_json(\@argv)
+}
+
+# Long-poll. Returns 0..N message hashrefs.
+fn AWS::SQS::receive ($queue, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "sqs", "receive", AWS::_shq($queue)
+    push @argv, "--max",        AWS::_shq($opts{max})        if defined $opts{max}
+    push @argv, "--wait",       AWS::_shq($opts{wait})       if defined $opts{wait}
+    push @argv, "--visibility", AWS::_shq($opts{visibility}) if defined $opts{visibility}
+    AWS::_run_ndjson(\@argv)
+}
+
+fn AWS::SQS::delete ($queue, $receipt, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "sqs", "delete", AWS::_shq($queue), "--receipt", AWS::_shq($receipt)
+    AWS::_run_json(\@argv)
+}
+
+fn AWS::SQS::purge ($queue, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "sqs", "purge", AWS::_shq($queue)
+    AWS::_run_json(\@argv)
+}
+
+fn AWS::SQS::attrs ($queue, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "sqs", "attrs", AWS::_shq($queue)
+    AWS::_run_json(\@argv)
+}
+
+# List queue URLs (with optional prefix).
+fn AWS::SQS::list (%opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "sqs", "list"
+    push @argv, "--prefix", AWS::_shq($opts{prefix}) if defined $opts{prefix}
+    map { $_->{url} } AWS::_run_ndjson(\@argv)
+}
+
+# Convenience: long-poll a queue and pump every message through a
+# callback, deleting on success. Returns the count handled.
+fn AWS::SQS::pump ($queue, %opts) {
+    die "AWS::SQS::pump: callback => sub { … } is required" unless defined $opts{callback}
+    my $cb = $opts{callback}
+    my $iters = $opts{iterations} // 1
+    my $n = 0
+    for (1 .. $iters) {
+        my @msgs = AWS::SQS::receive($queue, %opts)
+        last unless @msgs
+        for my $m (@msgs) {
+            $cb->($m)
+            AWS::SQS::delete($queue, $m->{receipt_handle}, %opts)
+            $n++
+        }
+    }
+    $n
+}
+
+1

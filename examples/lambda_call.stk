@@ -1,0 +1,11 @@
+#!/usr/bin/env stryke
+# examples/lambda_call.stk — sync-invoke a Lambda with a JSON payload.
+# Run:   s examples/lambda_call.stk my-fn
+
+use AWS::Lambda
+
+my $fn = $ARGV[0]
+die "usage: lambda_call.stk FUNCTION_NAME\n" unless defined $fn
+
+my $payload = AWS::Lambda::call $fn, { hello => "world", n => 42 }
+p "function returned: " . to_json($payload)

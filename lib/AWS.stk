@@ -1,0 +1,167 @@
+# lib/AWS.stk — AWS client plumbing for stryke.
+#
+# Wraps the `stryke-aws-helper` Rust binary (aws-sdk-rust based) and parses
+# its JSON/NDJSON output. The per-service modules (AWS::S3, AWS::Dynamo,
+# AWS::SQS, AWS::Lambda, AWS::STS) call the helpers here for argv
+# assembly, subprocess plumbing, and JSON decoding.
+#
+# Credentials and region come from the standard AWS chain (env vars,
+# `~/.aws/config`, IMDS, …) — same as the `aws` CLI. You can override per
+# call:
+#   AWS::S3::ls "s3://bucket", region => "us-west-2", profile => "prod"
+#
+# Internal helpers pass `$o` as a hashref rather than flattening `%opts`,
+# working around the stryke `%opts`-reslurp issue we hit in the other
+# packages.
+
+package AWS
+
+our $HELPER
+
+fn AWS::pkg_root {
+    my @parts = split "/", __FILE__
+    pop @parts
+    pop @parts
+    my $root = join "/", @parts
+    $root ne "" ? $root : "."
+}
+
+fn AWS::helper_path {
+    return $AWS::HELPER if defined $AWS::HELPER && -x $AWS::HELPER
+
+    if (exists $ENV{STRYKE_AWS_HELPER} && $ENV{STRYKE_AWS_HELPER} ne "") {
+        my $p = $ENV{STRYKE_AWS_HELPER}
+        die "stryke-aws: STRYKE_AWS_HELPER=$p is not an executable file" unless -x $p
+        $AWS::HELPER = $p
+        return $p
+    }
+
+    my $root = AWS::pkg_root()
+    for my $cand (
+        "$root/target/release/stryke-aws-helper",
+        "$root/target/debug/stryke-aws-helper",
+        "$root/bin/stryke-aws-helper",
+    ) {
+        if (-x $cand) {
+            $AWS::HELPER = $cand
+            return $cand
+        }
+    }
+
+    my $which = qx{command -v stryke-aws-helper 2>/dev/null}
+    chomp $which
+    if ($which ne "" && -x $which) {
+        $AWS::HELPER = $which
+        return $which
+    }
+
+    die "stryke-aws: helper binary not found.\n" .
+        "  Build it once with:  cd $root && cargo build --release\n" .
+        "  Or set STRYKE_AWS_HELPER=/path/to/stryke-aws-helper\n"
+}
+
+fn AWS::ensure_built {
+    my $root = AWS::pkg_root()
+    for my $cand ("$root/target/release/stryke-aws-helper",
+                  "$root/target/debug/stryke-aws-helper") {
+        return $cand if -x $cand
+    }
+    return AWS::helper_path() if exists $ENV{STRYKE_AWS_HELPER}
+
+    p "stryke-aws: building helper (cargo build --release)..."
+    my $rc = system "cd " . AWS::_shq($root) . " && cargo build --release"
+    die "stryke-aws: cargo build failed (rc=$rc)" if $rc != 0
+    AWS::helper_path()
+}
+
+# Single-quote shell-escape: wrap in '…' and replace embedded ' with '\'' .
+fn AWS::_shq ($s) {
+    my $t = $s
+    $t =~ s/'/'\\''/g
+    "'$t'"
+}
+
+# Leading helper + global connection flags. $o is a hashref.
+fn AWS::_conn_argv ($o) {
+    my @argv = (AWS::_shq(AWS::helper_path()))
+    push @argv, "--region",   AWS::_shq($o->{region})   if defined $o->{region}
+    push @argv, "--profile",  AWS::_shq($o->{profile})  if defined $o->{profile}
+    push @argv, "--endpoint", AWS::_shq($o->{endpoint}) if defined $o->{endpoint}
+    @argv
+}
+
+# Drain `-|` filehandle as NDJSON. Strips blank lines.
+fn AWS::_drain_ndjson ($fh) {
+    my @rows
+    while (my $line = <$fh>) {
+        chomp $line
+        next if $line eq ""
+        push @rows, from_json $line
+    }
+    @rows
+}
+
+# Run argv, collect NDJSON rows from stdout.
+fn AWS::_run_ndjson ($argv) {
+    my $cmd = join " ", @$argv
+    if ($ENV{STRYKE_AWS_DEBUG}) {
+        warn "DEBUG aws cmd: $cmd\n"
+    }
+    open my $fh, "-|", $cmd or die "stryke-aws: spawn failed: $!"
+    my @rows = AWS::_drain_ndjson $fh
+    close $fh or die "stryke-aws: helper exited ($?)"
+    @rows
+}
+
+# Run argv, capture stdout as single JSON object.
+fn AWS::_run_json ($argv) {
+    my $cmd = join " ", @$argv
+    if ($ENV{STRYKE_AWS_DEBUG}) {
+        warn "DEBUG aws cmd: $cmd\n"
+    }
+    my $out = qx{$cmd}
+    die "stryke-aws: helper exited ($?)" if $? != 0
+    from_json $out
+}
+
+# Run argv, capture stdout as raw bytes (no JSON parse). Used by S3 get.
+fn AWS::_run_raw ($argv) {
+    my $cmd = join " ", @$argv
+    if ($ENV{STRYKE_AWS_DEBUG}) {
+        warn "DEBUG aws cmd: $cmd\n"
+    }
+    my $out = qx{$cmd}
+    die "stryke-aws: helper exited ($?)" if $? != 0
+    $out
+}
+
+# Run argv, pipe `$data` to its stdin. Used by S3 put with in-memory data
+# and DDB batch-write.
+fn AWS::_run_with_stdin ($argv, $data) {
+    my $cmd = join " ", @$argv
+    if ($ENV{STRYKE_AWS_DEBUG}) {
+        warn "DEBUG aws cmd (with stdin): $cmd\n"
+    }
+    open my $fh, "|-", $cmd or die "stryke-aws: spawn failed: $!"
+    print $fh $data
+    close $fh or die "stryke-aws: helper exited ($?)"
+    1
+}
+
+fn AWS::version {
+    my $bin = AWS::_shq(AWS::helper_path())
+    my $v = qx{$bin --version 2>&1}
+    chomp $v
+    $v
+}
+
+# Quick connectivity / credentials check. Returns 1 / "" .
+fn AWS::ping (%opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "ping"
+    my $cmd = join " ", @argv
+    my $out = qx{$cmd 2>/dev/null}
+    $? == 0 && $out =~ /\"account\"/
+}
+
+1

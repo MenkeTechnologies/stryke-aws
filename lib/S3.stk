@@ -1,0 +1,117 @@
+# lib/S3.stk — `use AWS::S3`
+#
+# Wraps the `s3` subcommand surface of stryke-aws-helper. Object URIs use
+# the standard `s3://bucket/key` form.
+
+package AWS::S3
+
+use AWS
+
+# Returns an array of NDJSON-decoded rows. Each row is one of:
+#   { type=>"object",  key, size, etag, last_modified, storage_class }
+#   { type=>"prefix",  key }
+fn AWS::S3::ls ($uri, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "ls", AWS::_shq($uri)
+    if (defined $opts{page_size}) {
+        push @argv, "--page-size", AWS::_shq($opts{page_size})
+    }
+    if (defined $opts{limit}) {
+        push @argv, "--limit", AWS::_shq($opts{limit})
+    }
+    if (defined $opts{delimiter}) {
+        push @argv, "--delimiter", AWS::_shq($opts{delimiter})
+    }
+    AWS::_run_ndjson(\@argv)
+}
+
+# Returns the object's body as a byte string (scalar). Pass
+# `output => "/path"` to write to a file instead and get the path back.
+fn AWS::S3::get ($uri, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "get", AWS::_shq($uri)
+    if (defined $opts{output}) {
+        push @argv, "--output", AWS::_shq($opts{output})
+        my $rc = system join(" ", @argv)
+        die "AWS::S3::get: helper exited ($rc)" if $rc != 0
+        return $opts{output}
+    }
+    push @argv, "--output", "-"
+    AWS::_run_raw(\@argv)
+}
+
+# Upload a scalar string OR a local file. Pass `data => $bytes` or
+# `input => "/local/path"`. Returns the put_object response object.
+fn AWS::S3::put ($uri, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "put", AWS::_shq($uri)
+    if (defined $opts{content_type}) {
+        push @argv, "--content-type", AWS::_shq($opts{content_type})
+    }
+    if (defined $opts{cache_control}) {
+        push @argv, "--cache-control", AWS::_shq($opts{cache_control})
+    }
+
+    if (defined $opts{data}) {
+        push @argv, "--input", "-"
+        # Capture stdout into a temp file so we can return the JSON result.
+        # (We can't easily do bidirectional pipes from stryke.)
+        my $tmp = "/tmp/stryke-aws-put-$$-$." . time()
+        my $cmd = join(" ", @argv) . " > " . AWS::_shq($tmp)
+        open my $fh, "|-", $cmd or die "AWS::S3::put: spawn failed: $!"
+        print $fh $opts{data}
+        close $fh or do {
+            unlink $tmp
+            die "AWS::S3::put: helper exited ($?)"
+        }
+        my $raw = ""
+        if (open my $rf, "<", $tmp) {
+            local $/
+            $raw = <$rf>
+            close $rf
+        }
+        unlink $tmp
+        return from_json $raw
+    }
+
+    if (defined $opts{input}) {
+        push @argv, "--input", AWS::_shq($opts{input})
+    } else {
+        die "AWS::S3::put: pass data => \$bytes or input => \"path\""
+    }
+    AWS::_run_json(\@argv)
+}
+
+fn AWS::S3::head ($uri, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "head", AWS::_shq($uri)
+    AWS::_run_json(\@argv)
+}
+
+fn AWS::S3::rm ($uri, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "rm", AWS::_shq($uri)
+    AWS::_run_json(\@argv)
+}
+
+# %opts: method => "GET"|"PUT" (default GET), expires => seconds (default 3600)
+fn AWS::S3::presign ($uri, %opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "presign", AWS::_shq($uri)
+    if (defined $opts{method}) {
+        push @argv, "--method", AWS::_shq($opts{method})
+    }
+    if (defined $opts{expires}) {
+        push @argv, "--expires", AWS::_shq($opts{expires})
+    }
+    AWS::_run_json(\@argv)
+}
+
+# List buckets — array of {name, creation_date}.
+fn AWS::S3::buckets (%opts) {
+    my @argv = AWS::_conn_argv(\%opts)
+    push @argv, "s3", "buckets"
+    AWS::_run_ndjson(\@argv)
+}
+
+1

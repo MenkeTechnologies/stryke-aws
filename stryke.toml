@@ -1,0 +1,19 @@
+[package]
+name = "aws"
+version = "0.1.0"
+description = "AWS client (S3, DynamoDB, SQS, Lambda, STS) for stryke. Opt-in package tier; keeps the stryke core binary slim."
+authors = ["MenkeTechnologies"]
+license = "MIT"
+repository = "https://github.com/MenkeTechnologies/stryke-aws"
+edition = "2026"
+
+[bin]
+aws = "bin/aws.stk"
+aws-build = "bin/aws-build.stk"
+
+[scripts]
+build = "cargo build --release"
+build-debug = "cargo build"
+clean = "cargo clean"
+test = "s test t/"
+install = "s pkg install -g ."
