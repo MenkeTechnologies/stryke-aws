@@ -1,12 +1,48 @@
-# stryke-aws
+```
+ ███████╗████████╗██████╗ ██╗   ██╗██╗  ██╗███████╗
+ ██╔════╝╚══██╔══╝██╔══██╗╚██╗ ██╔╝██║ ██╔╝██╔════╝
+ ███████╗   ██║   ██████╔╝ ╚████╔╝ █████╔╝ █████╗
+ ╚════██║   ██║   ██╔══██╗  ╚██╔╝  ██╔═██╗ ██╔══╝
+ ███████║   ██║   ██║  ██║   ██║   ██║  ██╗███████╗
+ ╚══════╝   ╚═╝   ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝
+                   [ a w s ]
+```
+
+[![CI](https://github.com/MenkeTechnologies/stryke-aws/actions/workflows/ci.yml/badge.svg)](https://github.com/MenkeTechnologies/stryke-aws/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![stryke](https://img.shields.io/badge/stryke-package-cyan.svg)](https://github.com/MenkeTechnologies/strykelang)
+
+### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS]`
+
+> *"The cloud, one stryke pipe away."*
 
 AWS client for stryke — S3, DynamoDB, SQS, Lambda, STS. Opt-in package
 tier, kept out of the stryke core binary so the daily-driver install stays
 slim.
 
-Created by MenkeTechnologies.
+### [`strykelang`](https://github.com/MenkeTechnologies/strykelang) &middot; [`MenkeTechnologiesMeta`](https://github.com/MenkeTechnologies/MenkeTechnologiesMeta) · [`stryke-gcp`](https://github.com/MenkeTechnologies/stryke-gcp) · [`stryke-docker`](https://github.com/MenkeTechnologies/stryke-docker) · [`stryke-k8s`](https://github.com/MenkeTechnologies/stryke-k8s) · [`stryke-demo`](https://github.com/MenkeTechnologies/stryke-demo)
 
-## Why this is a package, not a builtin
+---
+
+## Table of Contents
+
+- [\[0x00\] Why this is a package, not a builtin](#0x00-why-this-is-a-package-not-a-builtin)
+- [\[0x01\] Install](#0x01-install)
+- [\[0x02\] Quick start](#0x02-quick-start)
+- [\[0x03\] CLI: `aws`](#0x03-cli-aws)
+- [\[0x04\] API reference](#0x04-api-reference)
+- [\[0x05\] Helper protocol](#0x05-helper-protocol)
+- [\[0x06\] DynamoDB type encoding](#0x06-dynamodb-type-encoding)
+- [\[0x07\] LocalStack / MinIO](#0x07-localstack-minio)
+- [\[0x08\] Tests](#0x08-tests)
+- [\[0x09\] Dev workflow](#0x09-dev-workflow)
+- [\[0x0A\] Layout](#0x0a-layout)
+- [\[0x0B\] Roadmap](#0x0b-roadmap)
+- [\[0xFF\] License](#0xff-license)
+
+---
+
+## [0x00] Why this is a package, not a builtin
 
 The official aws-sdk-rust crates pull in tokio, hyper, rustls, and a fat
 chain of smithy / signing / endpoint-resolution support code. Five SDKs
@@ -18,7 +54,7 @@ stryke library spawns a Rust helper binary per call and parses JSON over
 the pipe. Credentials and region come from the standard AWS chain (env
 vars, `~/.aws/config|credentials`, IMDS) — same as the `aws` CLI.
 
-## Install
+## [0x01] Install
 
 ```sh
 cd ~/projects/stryke-aws
@@ -32,7 +68,7 @@ Or:
 make install
 ```
 
-## Quick start
+## [0x02] Quick start
 
 ```stryke
 use AWS::S3
@@ -91,7 +127,7 @@ AWS::S3::ls "s3://...",
     endpoint => "http://localstack:4566"       # for LocalStack / MinIO
 ```
 
-## CLI: `aws`
+## [0x03] CLI: `aws`
 
 ```sh
 aws s3 ls s3://bucket/prefix/ --delimiter=/
@@ -140,7 +176,7 @@ Credentials use the standard AWS chain: env vars → profile in
 `~/.aws/credentials` → IMDS (EC2) → SSO. No `--access-key` / `--secret-key`
 flags — set the env vars or use a profile.
 
-## API reference
+## [0x04] API reference
 
 ### `use AWS`
 
@@ -206,7 +242,7 @@ AWS::STS::caller_identity %opts → { account, arn, user_id }
 AWS::STS::assume_role     $role_arn, session => "...", %opts → { access_key_id, secret_access_key, session_token, expiration, assumed_role_arn }
 ```
 
-## Helper protocol
+## [0x05] Helper protocol
 
 ```sh
 stryke-aws-helper s3 ls s3://bucket/prefix --delimiter=/
@@ -224,7 +260,7 @@ Output:
 * Single-object commands → one JSON object + newline.
 * All errors → exit non-zero, message on stderr.
 
-## DynamoDB type encoding
+## [0x06] DynamoDB type encoding
 
 Plain JSON → `AttributeValue`:
 
@@ -241,7 +277,7 @@ Set types (`SS` / `NS` / `BS`) round-trip *out* as JSON arrays — on the
 write path, pass them as `L` (an array) and DynamoDB will store as a list,
 or use the raw helper if you specifically need a typed set.
 
-## LocalStack / MinIO
+## [0x07] LocalStack / MinIO
 
 ```stryke
 my %ls = (endpoint => "http://localhost:4566", region => "us-east-1")
@@ -251,7 +287,7 @@ AWS::SQS::list(%ls)   |> ep
 
 `$ENV{AWS_ENDPOINT_URL}` works as a global default.
 
-## Tests
+## [0x08] Tests
 
 ```sh
 cargo test                                          # compiles, no live calls
@@ -267,7 +303,7 @@ s test t/
 The suite skips cleanly when the helper isn't built, when credentials are
 missing, or when the per-service env vars are unset.
 
-## Dev workflow
+## [0x09] Dev workflow
 
 ```sh
 make             # release build
@@ -277,7 +313,7 @@ make install
 make clean
 ```
 
-## Layout
+## [0x0A] Layout
 
 ```
 stryke-aws/
@@ -311,7 +347,7 @@ stryke-aws/
     release.yml                    # cross-compile + GH release on tag push
 ```
 
-## Roadmap
+## [0x0B] Roadmap
 
 | v1 (this release) | v2+ |
 |---|---|
@@ -320,6 +356,6 @@ stryke-aws/
 | Plain JSON DDB | Typed-set passthrough, optimistic-locking helpers |
 | Buffered S3 put | Streaming multipart upload |
 
-## License
+## [0xFF] License
 
 MIT.
