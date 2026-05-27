@@ -524,6 +524,246 @@ async fn tables(client: &Client) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── json_to_av ──────────────────────────────────────────────────
+
+    #[test]
+    fn json_to_av_null_becomes_null_true() {
+        match json_to_av(&Value::Null) {
+            AttributeValue::Null(b) => assert!(b),
+            other => panic!("expected Null, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_bool() {
+        match json_to_av(&json!(true)) {
+            AttributeValue::Bool(b) => assert!(b),
+            other => panic!("expected Bool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_number_preserves_string_form() {
+        // DynamoDB stores numbers as strings; this preserves precision.
+        match json_to_av(&json!(123)) {
+            AttributeValue::N(s) => assert_eq!(s, "123"),
+            other => panic!("expected N, got {other:?}"),
+        }
+        match json_to_av(&json!(3.14)) {
+            AttributeValue::N(s) => assert_eq!(s, "3.14"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_string_plain() {
+        match json_to_av(&json!("hello")) {
+            AttributeValue::S(s) => assert_eq!(s, "hello"),
+            other => panic!("expected S, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_base64_prefixed_string_becomes_binary() {
+        let raw = b"hello world";
+        let encoded = format!("base64:{}", B64.encode(raw));
+        match json_to_av(&json!(encoded)) {
+            AttributeValue::B(blob) => assert_eq!(blob.as_ref(), raw),
+            other => panic!("expected B, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_invalid_base64_prefix_stays_string() {
+        // Decoder fails → preserved as string verbatim (round-trip safety).
+        let s = "base64:!!!not valid base64!!!";
+        match json_to_av(&json!(s)) {
+            AttributeValue::S(got) => assert_eq!(got, s),
+            other => panic!("expected S fallback, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_nested_object_becomes_map() {
+        match json_to_av(&json!({"x": 1, "y": "z"})) {
+            AttributeValue::M(m) => {
+                assert_eq!(m.len(), 2);
+                assert!(matches!(m.get("x"), Some(AttributeValue::N(_))));
+                assert!(matches!(m.get("y"), Some(AttributeValue::S(_))));
+            }
+            other => panic!("expected M, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_array_becomes_list() {
+        match json_to_av(&json!([1, "a", true])) {
+            AttributeValue::L(l) => assert_eq!(l.len(), 3),
+            other => panic!("expected L, got {other:?}"),
+        }
+    }
+
+    // ─── av_to_json ──────────────────────────────────────────────────
+
+    #[test]
+    fn av_to_json_number_parses_to_i64_when_possible() {
+        let av = AttributeValue::N("42".to_string());
+        assert_eq!(av_to_json(&av), json!(42));
+    }
+
+    #[test]
+    fn av_to_json_number_parses_to_f64_for_decimals() {
+        let av = AttributeValue::N("3.5".to_string());
+        assert_eq!(av_to_json(&av), json!(3.5));
+    }
+
+    #[test]
+    fn av_to_json_number_oversized_falls_back_to_string() {
+        // DDB N can hold 38-digit precision; if neither i64 nor f64 parse,
+        // av_to_json hands the raw string back. f64 parses most strings, so
+        // pick something that fails BOTH parsers: a non-numeric N.
+        let av = AttributeValue::N("not-a-number".to_string());
+        assert_eq!(av_to_json(&av), Value::String("not-a-number".to_string()));
+    }
+
+    #[test]
+    fn av_to_json_binary_encodes_with_base64_prefix() {
+        let av = AttributeValue::B(aws_smithy_types::Blob::new(b"abc".to_vec()));
+        let j = av_to_json(&av);
+        let s = j.as_str().unwrap();
+        assert!(s.starts_with("base64:"), "s = {s}");
+        let decoded = B64.decode(s.strip_prefix("base64:").unwrap()).unwrap();
+        assert_eq!(decoded, b"abc");
+    }
+
+    #[test]
+    fn av_to_json_null_variant() {
+        assert_eq!(av_to_json(&AttributeValue::Null(true)), Value::Null);
+    }
+
+    #[test]
+    fn av_to_json_string_set() {
+        let av = AttributeValue::Ss(vec!["a".into(), "b".into()]);
+        assert_eq!(av_to_json(&av), json!(["a", "b"]));
+    }
+
+    #[test]
+    fn av_to_json_number_set_parses_each_entry() {
+        let av = AttributeValue::Ns(vec!["1".into(), "2.5".into(), "nope".into()]);
+        assert_eq!(av_to_json(&av), json!([1, 2.5, "nope"]));
+    }
+
+    // ─── round-trip: json_to_av → av_to_json ─────────────────────────
+
+    #[test]
+    fn json_av_round_trip_scalars() {
+        for v in [json!(null), json!(true), json!(42), json!("hi"), json!(2.5)] {
+            let round = av_to_json(&json_to_av(&v));
+            assert_eq!(round, v, "value {v:?} did not round-trip");
+        }
+    }
+
+    #[test]
+    fn json_av_round_trip_nested_map() {
+        let v = json!({"id": 1, "name": "x", "tags": ["a", "b"], "active": true});
+        let round = av_to_json(&json_to_av(&v));
+        assert_eq!(round, v);
+    }
+
+    #[test]
+    fn json_av_round_trip_binary_via_base64_prefix() {
+        let encoded = format!("base64:{}", B64.encode(b"raw bytes"));
+        let v = json!(encoded);
+        let round = av_to_json(&json_to_av(&v));
+        assert_eq!(round, v);
+    }
+
+    // ─── json_obj_to_av_map ──────────────────────────────────────────
+
+    #[test]
+    fn json_obj_to_av_map_simple() {
+        let m = json_obj_to_av_map(r#"{"id":42,"name":"x"}"#).unwrap();
+        assert_eq!(m.len(), 2);
+        assert!(matches!(m.get("id"), Some(AttributeValue::N(_))));
+        assert!(matches!(m.get("name"), Some(AttributeValue::S(_))));
+    }
+
+    #[test]
+    fn json_obj_to_av_map_array_rejected() {
+        let err = json_obj_to_av_map("[1,2,3]").unwrap_err();
+        assert!(format!("{err}").contains("object"));
+    }
+
+    #[test]
+    fn json_obj_to_av_map_string_rejected() {
+        let err = json_obj_to_av_map(r#""nope""#).unwrap_err();
+        assert!(format!("{err}").contains("object"));
+    }
+
+    #[test]
+    fn json_obj_to_av_map_invalid_json_errors() {
+        let err = json_obj_to_av_map("{not json}").unwrap_err();
+        assert!(format!("{err}").to_lowercase().contains("parsing"));
+    }
+
+    // ─── av_map_to_json ──────────────────────────────────────────────
+
+    #[test]
+    fn av_map_to_json_emits_object() {
+        let mut m = HashMap::new();
+        m.insert("a".to_string(), AttributeValue::N("1".into()));
+        m.insert("b".to_string(), AttributeValue::S("two".into()));
+        let v = av_map_to_json(&m);
+        assert_eq!(v["a"], json!(1));
+        assert_eq!(v["b"], json!("two"));
+    }
+
+    // ─── parse_vals / parse_names ────────────────────────────────────
+
+    #[test]
+    fn parse_vals_none_returns_none() {
+        let got = parse_vals(None).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn parse_vals_parses_json_object() {
+        let got = parse_vals(Some(r#"{":id":42}"#)).unwrap().unwrap();
+        assert!(matches!(got.get(":id"), Some(AttributeValue::N(_))));
+    }
+
+    #[test]
+    fn parse_names_none_returns_none() {
+        let got = parse_names(None).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn parse_names_parses_string_map() {
+        let got = parse_names(Some(r##"{"#x":"alias"}"##)).unwrap().unwrap();
+        assert_eq!(got.get("#x").map(String::as_str), Some("alias"));
+    }
+
+    #[test]
+    fn parse_names_array_rejected() {
+        let err = parse_names(Some(r#"["a","b"]"#)).unwrap_err();
+        assert!(format!("{err}").contains("object"));
+    }
+
+    #[test]
+    fn parse_names_non_string_value_falls_back_to_empty() {
+        // The impl maps non-string values to an empty String rather than
+        // erroring — pinning current behavior so future tightening is
+        // deliberate.
+        let got = parse_names(Some(r##"{"#x":123}"##)).unwrap().unwrap();
+        assert_eq!(got.get("#x").map(String::as_str), Some(""));
+    }
+}
+
 async fn describe(client: &Client, table: &str) -> Result<()> {
     let resp = client
         .describe_table()

@@ -93,3 +93,74 @@ pub async fn write_output_bytes(path: &str, bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ─── parse_s3_uri ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_s3_uri_bucket_and_key() {
+        let (b, k) = parse_s3_uri("s3://my-bucket/path/to/file.txt").unwrap();
+        assert_eq!(b, "my-bucket");
+        assert_eq!(k, "path/to/file.txt");
+    }
+
+    #[test]
+    fn parse_s3_uri_bucket_only_returns_empty_key() {
+        let (b, k) = parse_s3_uri("s3://just-bucket").unwrap();
+        assert_eq!(b, "just-bucket");
+        assert_eq!(k, "");
+    }
+
+    #[test]
+    fn parse_s3_uri_trailing_slash_yields_empty_key() {
+        let (b, k) = parse_s3_uri("s3://bucket/").unwrap();
+        assert_eq!(b, "bucket");
+        assert_eq!(k, "");
+    }
+
+    #[test]
+    fn parse_s3_uri_preserves_internal_slashes() {
+        let (b, k) = parse_s3_uri("s3://b/a/b/c/d").unwrap();
+        assert_eq!(b, "b");
+        // split_once stops at the FIRST '/', so the rest is the key verbatim.
+        assert_eq!(k, "a/b/c/d");
+    }
+
+    #[test]
+    fn parse_s3_uri_missing_scheme_errors() {
+        let err = parse_s3_uri("https://bucket/key").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("s3://"), "msg = {msg}");
+    }
+
+    #[test]
+    fn parse_s3_uri_wrong_scheme_errors() {
+        assert!(parse_s3_uri("S3://bucket/key").is_err()); // case-sensitive
+        assert!(parse_s3_uri("/just/a/path").is_err());
+        assert!(parse_s3_uri("").is_err());
+    }
+
+    // ─── emit_ndjson_line ────────────────────────────────────────────
+
+    #[test]
+    fn emit_ndjson_line_appends_single_newline() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!({"k": 1})).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert_eq!(s, "{\"k\":1}\n");
+    }
+
+    #[test]
+    fn emit_ndjson_line_multiple_calls() {
+        let mut buf = Vec::new();
+        for i in 0..3 {
+            emit_ndjson_line(&mut buf, &serde_json::json!({"i": i})).unwrap();
+        }
+        let s = String::from_utf8(buf).unwrap();
+        assert_eq!(s.lines().count(), 3);
+        assert!(s.ends_with('\n'));
+    }
+}
