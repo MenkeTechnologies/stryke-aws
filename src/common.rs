@@ -163,4 +163,205 @@ mod tests {
         assert_eq!(s.lines().count(), 3);
         assert!(s.ends_with('\n'));
     }
+
+    #[test]
+    fn parse_s3_uri_bucket_with_dots() {
+        let (b, k) = parse_s3_uri("s3://my.company.bucket/data/file.csv").unwrap();
+        assert_eq!(b, "my.company.bucket");
+        assert_eq!(k, "data/file.csv");
+    }
+
+    #[test]
+    fn parse_s3_uri_single_segment_key() {
+        let (b, k) = parse_s3_uri("s3://b/object").unwrap();
+        assert_eq!(b, "b");
+        assert_eq!(k, "object");
+    }
+
+    #[test]
+    fn parse_s3_uri_error_message_includes_input() {
+        let err = parse_s3_uri("ftp://b/k").unwrap_err();
+        assert!(format!("{err}").contains("ftp://b/k"));
+    }
+
+    #[test]
+    fn emit_ndjson_line_unicode_payload() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!({"msg": "日本語"})).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("日本語") || s.contains("\\u"));
+        assert!(s.ends_with('\n'));
+    }
+
+    #[test]
+    fn emit_ndjson_line_null_value_serializes() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::Value::Null).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "null\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_unicode_bucket_and_key() {
+        let (b, k) = parse_s3_uri("s3://バケット/ファイル.txt").unwrap();
+        assert_eq!(b, "バケット");
+        assert_eq!(k, "ファイル.txt");
+    }
+
+    #[test]
+    fn parse_s3_uri_deep_key_prefix() {
+        let (b, k) = parse_s3_uri("s3://b/a/b/c/d/e").unwrap();
+        assert_eq!(b, "b");
+        assert_eq!(k, "a/b/c/d/e");
+    }
+
+    #[test]
+    fn emit_ndjson_line_nested_object() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!({"a": {"b": 1}})).unwrap();
+        let s = String::from_utf8(buf).unwrap();
+        assert!(s.contains("\"b\":1"));
+        assert!(s.ends_with('\n'));
+    }
+
+    #[test]
+    fn parse_s3_uri_bucket_with_version_like_name() {
+        let (b, k) = parse_s3_uri("s3://my-bucket-v2/").unwrap();
+        assert_eq!(b, "my-bucket-v2");
+        assert_eq!(k, "");
+    }
+
+    #[test]
+    fn emit_ndjson_line_array_payload() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!([1, 2, 3])).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "[1,2,3]\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_key_with_plus_sign() {
+        let (b, k) = parse_s3_uri("s3://b/a+b.txt").unwrap();
+        assert_eq!(b, "b");
+        assert_eq!(k, "a+b.txt");
+    }
+
+    #[test]
+    fn parse_s3_uri_single_char_key() {
+        let (b, k) = parse_s3_uri("s3://bucket/x").unwrap();
+        assert_eq!(b, "bucket");
+        assert_eq!(k, "x");
+    }
+
+    #[test]
+    fn emit_ndjson_line_number() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!(42)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "42\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_error_includes_input_uri() {
+        let bad = "file:///tmp/x";
+        let err = parse_s3_uri(bad).unwrap_err();
+        assert!(format!("{err}").contains(bad));
+    }
+
+    #[test]
+    fn emit_ndjson_line_empty_object() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!({})).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "{}\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_bucket_only_no_key() {
+        let (b, k) = parse_s3_uri("s3://mybucket").unwrap();
+        assert_eq!(b, "mybucket");
+        assert_eq!(k, "");
+    }
+
+    #[test]
+    fn parse_s3_uri_key_with_percent_encoded_chars() {
+        let (b, k) = parse_s3_uri("s3://b/path%20name").unwrap();
+        assert_eq!(b, "b");
+        assert_eq!(k, "path%20name");
+    }
+
+    #[test]
+    fn parse_s3_uri_rejects_http_scheme() {
+        assert!(parse_s3_uri("http://bucket/key").is_err());
+    }
+
+    #[test]
+    fn emit_ndjson_line_string_payload() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!("line")).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "\"line\"\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_key_ends_with_slash() {
+        let (b, k) = parse_s3_uri("s3://data/prefix/").unwrap();
+        assert_eq!(b, "data");
+        assert_eq!(k, "prefix/");
+    }
+
+    #[test]
+    fn emit_ndjson_line_negative_number() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!(-1)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "-1\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_single_slash_after_bucket() {
+        let (b, k) = parse_s3_uri("s3://x/").unwrap();
+        assert_eq!(b, "x");
+        assert_eq!(k, "");
+    }
+
+    #[test]
+    fn parse_s3_uri_key_with_hash() {
+        let (b, k) = parse_s3_uri("s3://b/file#frag").unwrap();
+        assert_eq!(b, "b");
+        assert_eq!(k, "file#frag");
+    }
+
+    #[test]
+    fn parse_s3_uri_rejects_gs_scheme() {
+        assert!(parse_s3_uri("gs://b/k").is_err());
+    }
+
+    #[test]
+    fn emit_ndjson_line_i64() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!(1_000_000i64)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "1000000\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_bucket_hyphenated() {
+        let (b, k) = parse_s3_uri("s3://my-bucket-v2/data/").unwrap();
+        assert_eq!(b, "my-bucket-v2");
+        assert_eq!(k, "data/");
+    }
+
+    #[test]
+    fn emit_ndjson_line_empty_array() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!([])).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "[]\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_error_mentions_s3_prefix() {
+        let err = parse_s3_uri("ftp://x/y").unwrap_err();
+        assert!(format!("{err}").contains("s3://"));
+    }
+
+    #[test]
+    fn emit_ndjson_line_nested_string() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!({"msg": "ok"})).unwrap();
+        assert!(String::from_utf8(buf).unwrap().contains("ok"));
+    }
 }

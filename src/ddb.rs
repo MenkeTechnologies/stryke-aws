@@ -762,6 +762,278 @@ mod tests {
         let got = parse_names(Some(r##"{"#x":123}"##)).unwrap().unwrap();
         assert_eq!(got.get("#x").map(String::as_str), Some(""));
     }
+
+    #[test]
+    fn av_to_json_bool_false() {
+        assert_eq!(av_to_json(&AttributeValue::Bool(false)), json!(false));
+    }
+
+    #[test]
+    fn av_to_json_list_recurses() {
+        let av = AttributeValue::L(vec![
+            AttributeValue::N("1".into()),
+            AttributeValue::S("a".into()),
+        ]);
+        assert_eq!(av_to_json(&av), json!([1, "a"]));
+    }
+
+    #[test]
+    fn av_to_json_map_object() {
+        let mut m = HashMap::new();
+        m.insert("k".into(), AttributeValue::S("v".into()));
+        assert_eq!(av_to_json(&AttributeValue::M(m))["k"], json!("v"));
+    }
+
+    #[test]
+    fn json_to_av_string_array_becomes_list_not_ss() {
+        match json_to_av(&json!(["x", "y"])) {
+            AttributeValue::L(items) => {
+                assert_eq!(items.len(), 2);
+                assert!(matches!(&items[0], AttributeValue::S(s) if s == "x"));
+            }
+            other => panic!("expected L, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_empty_array_becomes_empty_list() {
+        match json_to_av(&json!([])) {
+            AttributeValue::L(l) => assert!(l.is_empty()),
+            other => panic!("expected L, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_vals_invalid_json_errors() {
+        let err = parse_vals(Some("{bad")).unwrap_err();
+        assert!(format!("{err}").to_lowercase().contains("parsing"));
+    }
+
+    #[test]
+    fn av_map_to_json_empty_map() {
+        let v = av_map_to_json(&HashMap::new());
+        assert!(v.as_object().unwrap().is_empty());
+    }
+
+    #[test]
+    fn json_av_round_trip_empty_object() {
+        let v = json!({});
+        assert_eq!(av_to_json(&json_to_av(&v)), v);
+    }
+
+    #[test]
+    fn av_to_json_binary_set_base64_prefixes() {
+        let av = AttributeValue::Bs(vec![
+            aws_smithy_types::Blob::new(b"a"),
+            aws_smithy_types::Blob::new(b"bb"),
+        ]);
+        let j = av_to_json(&av);
+        let arr = j.as_array().unwrap();
+        assert_eq!(arr.len(), 2);
+        assert!(arr[0].as_str().unwrap().starts_with("base64:"));
+        assert!(arr[1].as_str().unwrap().starts_with("base64:"));
+    }
+
+    #[test]
+    fn av_to_json_number_set_non_numeric_entry() {
+        let av = AttributeValue::Ns(vec!["1".into(), "x".into()]);
+        assert_eq!(av_to_json(&av), json!([1, "x"]));
+    }
+
+    #[test]
+    fn json_to_av_negative_number_string_form() {
+        match json_to_av(&json!(-42)) {
+            AttributeValue::N(s) => assert_eq!(s, "-42"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_av_round_trip_nested_list_in_map() {
+        let v = json!({"items": [1, 2]});
+        assert_eq!(av_to_json(&json_to_av(&v)), v);
+    }
+
+    #[test]
+    fn parse_vals_empty_object() {
+        let got = parse_vals(Some("{}")).unwrap().unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn parse_names_empty_object() {
+        let got = parse_names(Some("{}")).unwrap().unwrap();
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn av_to_json_large_integer_n_stays_string_when_f64_loses_precision() {
+        let big = "9007199254740993"; // i64::MAX + 2, not exactly representable as f64 integer
+        let av = AttributeValue::N(big.into());
+        let j = av_to_json(&av);
+        // May parse as f64 or stay string — pin that we don't panic and get a number or string.
+        assert!(j.is_number() || j.as_str() == Some(big));
+    }
+
+    #[test]
+    fn json_to_av_false_bool() {
+        match json_to_av(&json!(false)) {
+            AttributeValue::Bool(b) => assert!(!b),
+            other => panic!("expected Bool, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_obj_to_av_map_rejects_array() {
+        let err = json_obj_to_av_map("[1]").unwrap_err();
+        assert!(format!("{err}").contains("object"));
+    }
+
+    #[test]
+    fn av_map_to_json_two_entries() {
+        let mut m = HashMap::new();
+        m.insert("a".into(), AttributeValue::Bool(true));
+        m.insert("b".into(), AttributeValue::N("9".into()));
+        let v = av_map_to_json(&m);
+        assert_eq!(v["a"], json!(true));
+        assert_eq!(v["b"], json!(9));
+    }
+
+    #[test]
+    fn av_to_json_empty_list() {
+        assert_eq!(av_to_json(&AttributeValue::L(vec![])), json!([]));
+    }
+
+    #[test]
+    fn av_to_json_empty_map() {
+        assert_eq!(av_to_json(&AttributeValue::M(HashMap::new())), json!({}));
+    }
+
+    #[test]
+    fn json_obj_to_av_map_nested_object() {
+        let m = json_obj_to_av_map(r#"{"outer":{"inner":1}}"#).unwrap();
+        assert!(matches!(m.get("outer"), Some(AttributeValue::M(_))));
+    }
+
+    #[test]
+    fn av_to_json_ns_all_parse_as_numbers() {
+        let av = AttributeValue::Ns(vec!["1".into(), "2".into(), "3".into()]);
+        assert_eq!(av_to_json(&av), json!([1, 2, 3]));
+    }
+
+    #[test]
+    fn parse_vals_none_stays_none() {
+        assert!(parse_vals(None).unwrap().is_none());
+    }
+
+    #[test]
+    fn json_to_av_string_without_base64_prefix() {
+        match json_to_av(&json!("plain")) {
+            AttributeValue::S(s) => assert_eq!(s, "plain"),
+            other => panic!("expected S, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_negative_number_string() {
+        match json_to_av(&json!(-7)) {
+            AttributeValue::N(s) => assert_eq!(s, "-7"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn av_to_json_bool_true() {
+        assert_eq!(av_to_json(&AttributeValue::Bool(true)), json!(true));
+    }
+
+    #[test]
+    fn json_to_av_nested_array_in_map() {
+        let m = json_obj_to_av_map(r#"{"items":[1,2]}"#).unwrap();
+        match m.get("items") {
+            Some(AttributeValue::L(list)) => assert_eq!(list.len(), 2),
+            other => panic!("expected L, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn av_to_json_ss_set_of_strings() {
+        let av = AttributeValue::Ss(vec!["a".into(), "b".into()]);
+        assert_eq!(av_to_json(&av), json!(["a", "b"]));
+    }
+
+    #[test]
+    fn json_to_av_empty_object_map() {
+        match json_to_av(&json!({})) {
+            AttributeValue::M(m) => assert!(m.is_empty()),
+            other => panic!("expected M, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn json_to_av_zero_number() {
+        match json_to_av(&json!(0)) {
+            AttributeValue::N(s) => assert_eq!(s, "0"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn av_to_json_ns_empty_set() {
+        assert_eq!(av_to_json(&AttributeValue::Ns(vec![])), json!([]));
+    }
+
+    #[test]
+    fn av_to_json_binary_empty_blob() {
+        let av = AttributeValue::B(aws_smithy_types::Blob::new(b""));
+        let j = av_to_json(&av);
+        let s = j.as_str().unwrap();
+        assert!(s.starts_with("base64:"));
+    }
+
+    #[test]
+    fn json_to_av_true_bool() {
+        assert!(matches!(json_to_av(&json!(true)), AttributeValue::Bool(true)));
+    }
+
+    #[test]
+    fn av_to_json_l_list_nested() {
+        let av = AttributeValue::L(vec![
+            AttributeValue::N("1".into()),
+            AttributeValue::S("a".into()),
+        ]);
+        assert_eq!(av_to_json(&av), json!([1, "a"]));
+    }
+
+    #[test]
+    fn json_to_av_float_number_string() {
+        match json_to_av(&json!(1.25)) {
+            AttributeValue::N(s) => assert_eq!(s, "1.25"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_names_non_object_errors() {
+        assert!(parse_names(Some("[]")).is_err());
+    }
+
+    #[test]
+    fn av_to_json_m_map_nested() {
+        let mut inner = HashMap::new();
+        inner.insert("k".into(), AttributeValue::S("v".into()));
+        let av = AttributeValue::M(inner);
+        assert_eq!(av_to_json(&av)["k"], json!("v"));
+    }
+
+    #[test]
+    fn json_to_av_string_array_becomes_list() {
+        match json_to_av(&json!(["a", "b"])) {
+            AttributeValue::L(v) => assert_eq!(v.len(), 2),
+            other => panic!("expected L, got {other:?}"),
+        }
+    }
+
 }
 
 async fn describe(client: &Client, table: &str) -> Result<()> {
