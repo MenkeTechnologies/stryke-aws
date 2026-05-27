@@ -1034,6 +1034,50 @@ mod tests {
         }
     }
 
+    #[test]
+    fn av_to_json_l_empty_list() {
+        assert_eq!(av_to_json(&AttributeValue::L(vec![])), json!([]));
+    }
+
+    #[test]
+    fn json_to_av_large_integer_string() {
+        match json_to_av(&json!(9_223_372_036_854_775_807u64)) {
+            AttributeValue::N(s) => assert_eq!(s, "9223372036854775807"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_names_scalar_rejected() {
+        assert!(parse_names(Some("\"x\"")).is_err());
+    }
+
+    #[test]
+    fn av_to_json_bs_binary_set() {
+        let av = AttributeValue::Bs(vec![
+            aws_smithy_types::Blob::new(b"a"),
+            aws_smithy_types::Blob::new(b"b"),
+        ]);
+        let j = av_to_json(&av);
+        assert_eq!(j.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn json_to_av_nested_map_in_map() {
+        let m = json_obj_to_av_map(r#"{"outer":{"inner":"v"}}"#).unwrap();
+        assert!(matches!(m.get("outer"), Some(AttributeValue::M(_))));
+    }
+
+    #[test]
+    fn parse_vals_string_scalar_rejected() {
+        assert!(parse_vals(Some("\"x\"")).is_err());
+    }
+
+    #[test]
+    fn parse_vals_array_rejected() {
+        assert!(parse_vals(Some("[]")).is_err());
+    }
+
 }
 
 async fn describe(client: &Client, table: &str) -> Result<()> {

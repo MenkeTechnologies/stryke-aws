@@ -364,4 +364,55 @@ mod tests {
         emit_ndjson_line(&mut buf, &serde_json::json!({"msg": "ok"})).unwrap();
         assert!(String::from_utf8(buf).unwrap().contains("ok"));
     }
+
+    #[test]
+    fn parse_s3_uri_wildcard_in_key() {
+        let (b, k) = parse_s3_uri("s3://logs/2024/*.json").unwrap();
+        assert_eq!(b, "logs");
+        assert_eq!(k, "2024/*.json");
+    }
+
+    #[test]
+    fn parse_s3_uri_rejects_empty_string() {
+        assert!(parse_s3_uri("").is_err());
+    }
+
+    #[test]
+    fn emit_ndjson_line_bool_false() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!(false)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "false\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_key_only_dot() {
+        let (b, k) = parse_s3_uri("s3://bucket/.").unwrap();
+        assert_eq!(b, "bucket");
+        assert_eq!(k, ".");
+    }
+
+    #[test]
+    fn emit_ndjson_line_float() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!(1.5)).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "1.5\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_preserves_plus_in_key() {
+        let (_, k) = parse_s3_uri("s3://b/a+b").unwrap();
+        assert_eq!(k, "a+b");
+    }
+
+    #[test]
+    fn emit_ndjson_line_null() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::Value::Null).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "null\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_bucket_uppercase_rejected() {
+        assert!(parse_s3_uri("S3://bucket/k").is_err());
+    }
 }
