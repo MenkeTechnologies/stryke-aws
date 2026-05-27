@@ -1078,6 +1078,55 @@ mod tests {
         assert!(parse_vals(Some("[]")).is_err());
     }
 
+    #[test]
+    fn av_to_json_n_zero_string() {
+        assert_eq!(av_to_json(&AttributeValue::N("0".into())), json!(0));
+    }
+
+    #[test]
+    fn json_to_av_empty_string() {
+        match json_to_av(&json!("")) {
+            AttributeValue::S(s) => assert!(s.is_empty()),
+            other => panic!("expected S, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_names_empty_object_ok() {
+        assert!(parse_names(Some("{}")).unwrap().unwrap().is_empty());
+    }
+
+    #[test]
+    fn av_to_json_ss_three_strings() {
+        let av = AttributeValue::Ss(vec!["a".into(), "b".into(), "c".into()]);
+        assert_eq!(av_to_json(&av).as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn json_to_av_integer_one() {
+        match json_to_av(&json!(1)) {
+            AttributeValue::N(s) => assert_eq!(s, "1"),
+            other => panic!("expected N, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_vals_number_scalar_rejected() {
+        assert!(parse_vals(Some("42")).is_err());
+    }
+
+    #[test]
+    fn av_to_json_m_single_entry() {
+        let mut m = HashMap::new();
+        m.insert("only".into(), AttributeValue::S("v".into()));
+        assert_eq!(av_to_json(&AttributeValue::M(m))["only"], json!("v"));
+    }
+
+    #[test]
+    fn json_to_av_null_explicit() {
+        assert!(matches!(json_to_av(&json!(null)), AttributeValue::Null(true)));
+    }
+
 }
 
 async fn describe(client: &Client, table: &str) -> Result<()> {

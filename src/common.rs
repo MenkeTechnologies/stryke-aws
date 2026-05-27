@@ -415,4 +415,46 @@ mod tests {
     fn parse_s3_uri_bucket_uppercase_rejected() {
         assert!(parse_s3_uri("S3://bucket/k").is_err());
     }
+
+    #[test]
+    fn parse_s3_uri_key_with_question_mark() {
+        let (_, k) = parse_s3_uri("s3://b/file?.txt").unwrap();
+        assert_eq!(k, "file?.txt");
+    }
+
+    #[test]
+    fn parse_s3_uri_bucket_numeric() {
+        let (b, _) = parse_s3_uri("s3://12345/data").unwrap();
+        assert_eq!(b, "12345");
+    }
+
+    #[test]
+    fn parse_s3_uri_double_slash_in_key() {
+        let (_, k) = parse_s3_uri("s3://b//leading").unwrap();
+        assert_eq!(k, "/leading");
+    }
+
+    #[test]
+    fn parse_s3_uri_rejects_file_scheme() {
+        assert!(parse_s3_uri("file:///tmp/x").is_err());
+    }
+
+    #[test]
+    fn emit_ndjson_line_string_scalar() {
+        let mut buf = Vec::new();
+        emit_ndjson_line(&mut buf, &serde_json::json!("line")).unwrap();
+        assert_eq!(String::from_utf8(buf).unwrap(), "\"line\"\n");
+    }
+
+    #[test]
+    fn parse_s3_uri_key_with_ampersand() {
+        let (_, k) = parse_s3_uri("s3://b/a&b").unwrap();
+        assert_eq!(k, "a&b");
+    }
+
+    #[test]
+    fn parse_s3_uri_preserves_utf8_bucket() {
+        let (b, _) = parse_s3_uri("s3://バケット/k").unwrap();
+        assert_eq!(b, "バケット");
+    }
 }
