@@ -327,3 +327,91 @@ async fn buckets(client: &Client) -> Result<()> {
     out.flush()?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct TestCli {
+        #[command(subcommand)]
+        cmd: S3Cmd,
+    }
+
+    fn parse(args: &[&str]) -> Result<S3Cmd, clap::Error> {
+        let mut argv = vec!["stryke-aws-helper"];
+        argv.extend_from_slice(args);
+        TestCli::try_parse_from(argv).map(|c| c.cmd)
+    }
+
+    #[test]
+    fn buckets_parses_as_unit_variant() {
+        let cmd = parse(&["buckets"]).expect("parse");
+        assert!(matches!(cmd, S3Cmd::Buckets));
+    }
+
+    #[test]
+    fn ls_default_page_size_is_aws_max_1000() {
+        // Pin: must equal the AWS ListObjectsV2 hard cap. Lower numbers
+        // multiply round-trips for large prefixes; higher numbers get
+        // silently clamped by AWS, masking the misconfiguration.
+        let cmd = parse(&["ls", "s3://b/k"]).expect("parse");
+        match cmd {
+            S3Cmd::Ls { page_size, .. } => assert_eq!(page_size, 1000),
+            _ => panic!("expected Ls"),
+        }
+    }
+
+    #[test]
+    fn get_default_output_is_dash_for_stdout() {
+        // Pin the doc-comment contract: `-` means stdout. Switching this
+        // default to a path would clobber files on every `s3 get` without
+        // an explicit destination.
+        let cmd = parse(&["get", "s3://b/k"]).expect("parse");
+        match cmd {
+            S3Cmd::Get { output, .. } => assert_eq!(output, "-"),
+            _ => panic!("expected Get"),
+        }
+    }
+
+    #[test]
+    fn presign_method_defaults_to_get_and_expires_to_3600() {
+        let cmd = parse(&["presign", "s3://b/k"]).expect("parse");
+        match cmd {
+            S3Cmd::Presign {
+                method, expires, ..
+            } => {
+                assert_eq!(method, "GET");
+                assert_eq!(expires, 3600);
+            }
+            _ => panic!("expected Presign"),
+        }
+    }
+
+    #[test]
+    fn put_buffered_defaults_true_and_input_dash_means_stdin() {
+        let cmd = parse(&["put", "s3://b/k"]).expect("parse");
+        match cmd {
+            S3Cmd::Put {
+                buffered, input, ..
+            } => {
+                assert!(buffered);
+                assert_eq!(input, "-");
+            }
+            _ => panic!("expected Put"),
+        }
+    }
+
+    #[test]
+    fn rm_and_head_require_uri_positional() {
+        assert_eq!(
+            parse(&["rm"]).unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+        assert_eq!(
+            parse(&["head"]).unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+}

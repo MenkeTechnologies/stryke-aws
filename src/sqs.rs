@@ -207,3 +207,94 @@ async fn list(client: &Client, prefix: Option<&str>) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct TestCli {
+        #[command(subcommand)]
+        cmd: SqsCmd,
+    }
+
+    fn parse(args: &[&str]) -> Result<SqsCmd, clap::Error> {
+        let mut argv = vec!["stryke-aws-helper"];
+        argv.extend_from_slice(args);
+        TestCli::try_parse_from(argv).map(|c| c.cmd)
+    }
+
+    #[test]
+    fn send_requires_queue_url_and_body() {
+        let err = parse(&["send"]).expect_err("missing queue_url");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+        let err = parse(&["send", "https://sqs.us-east-1.amazonaws.com/123/q"])
+            .expect_err("missing --body");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn receive_default_max_is_ten_and_wait_is_twenty() {
+        // Pin the long-poll contract: 10 messages, 20s wait. These are the
+        // AWS hard caps — changing them silently would degrade throughput
+        // (smaller max) or break apps doing short-poll semantics (smaller wait).
+        let cmd = parse(&["receive", "https://sqs.us-east-1.amazonaws.com/123/q"]).expect("parse");
+        match cmd {
+            SqsCmd::Receive { max, wait, .. } => {
+                assert_eq!(max, 10);
+                assert_eq!(wait, 20);
+            }
+            _ => panic!("expected Receive"),
+        }
+    }
+
+    #[test]
+    fn send_fifo_dedup_and_group_id_flow_through() {
+        let cmd = parse(&[
+            "send",
+            "https://sqs.us-east-1.amazonaws.com/123/q.fifo",
+            "--body",
+            "payload",
+            "--dedup-id",
+            "dd-1",
+            "--group-id",
+            "grp-A",
+        ])
+        .expect("parse");
+        match cmd {
+            SqsCmd::Send {
+                dedup_id,
+                group_id,
+                body,
+                ..
+            } => {
+                assert_eq!(dedup_id.as_deref(), Some("dd-1"));
+                assert_eq!(group_id.as_deref(), Some("grp-A"));
+                assert_eq!(body, "payload");
+            }
+            _ => panic!("expected Send"),
+        }
+    }
+
+    #[test]
+    fn delete_requires_receipt_flag() {
+        let err = parse(&["delete", "https://sqs.us-east-1.amazonaws.com/123/q"])
+            .expect_err("missing --receipt");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn list_prefix_defaults_to_none_and_accepts_filter() {
+        let none = parse(&["list"]).expect("parse no-args");
+        match none {
+            SqsCmd::List { prefix } => assert!(prefix.is_none()),
+            _ => panic!("expected List"),
+        }
+        let some = parse(&["list", "--prefix", "prod-"]).expect("parse with prefix");
+        match some {
+            SqsCmd::List { prefix } => assert_eq!(prefix.as_deref(), Some("prod-")),
+            _ => panic!("expected List"),
+        }
+    }
+}
