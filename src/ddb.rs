@@ -1204,4 +1204,162 @@ mod tests {
             AttributeValue::Null(true)
         ));
     }
+
+    // ─── clap parsing — DdbCmd subcommand routing ───────────────────────
+    // Previous rounds pinned S3Cmd/SqsCmd/StsCmd/LambdaCmd. DdbCmd had only
+    // pure-helper coverage (json_to_av / av_to_json round-trips); the clap
+    // surface — table-required-positional, --key/--item/--expr flag
+    // plumbing, --consistent default off, --limit optional shape — was
+    // untested. Drift would silently change item-key semantics or default
+    // to consistent reads (2x cost on every Get).
+
+    use clap::Parser;
+
+    #[derive(Parser, Debug)]
+    struct TestCli {
+        #[command(subcommand)]
+        cmd: DdbCmd,
+    }
+
+    fn parse_ddb(args: &[&str]) -> Result<DdbCmd, clap::Error> {
+        let mut argv = vec!["stryke-aws-helper"];
+        argv.extend_from_slice(args);
+        TestCli::try_parse_from(argv).map(|c| c.cmd)
+    }
+
+    #[test]
+    fn ddb_tables_parses_as_unit_variant() {
+        let cmd = parse_ddb(&["tables"]).expect("parse");
+        assert!(matches!(cmd, DdbCmd::Tables));
+    }
+
+    #[test]
+    fn ddb_get_consistent_defaults_false_and_threads_through_when_set() {
+        // Pin: --consistent default OFF. Strongly-consistent reads cost 2x
+        // RCU; defaulting to on would silently double cost on every Get.
+        let cmd = parse_ddb(&["get", "users", "--key", r#"{"id":42}"#]).expect("parse");
+        match cmd {
+            DdbCmd::Get {
+                table,
+                key,
+                consistent,
+            } => {
+                assert_eq!(table, "users");
+                assert_eq!(key, r#"{"id":42}"#);
+                assert!(!consistent);
+            }
+            _ => panic!("expected Get"),
+        }
+        let cmd =
+            parse_ddb(&["get", "users", "--key", r#"{"id":1}"#, "--consistent"]).expect("parse");
+        match cmd {
+            DdbCmd::Get { consistent, .. } => assert!(consistent),
+            _ => panic!("expected Get"),
+        }
+    }
+
+    #[test]
+    fn ddb_get_put_delete_require_table_positional_and_key_item_flags() {
+        // table positional + --key/--item flag are both required clap-side;
+        // missing either kills the parse before any AWS call.
+        use clap::error::ErrorKind::MissingRequiredArgument;
+        assert_eq!(
+            parse_ddb(&["get"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_ddb(&["get", "t"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_ddb(&["put"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_ddb(&["put", "t"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+        assert_eq!(
+            parse_ddb(&["delete", "t"]).unwrap_err().kind(),
+            MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn ddb_query_optional_flags_default_to_none_and_route_when_supplied() {
+        // Pin: --vals/--names/--index/--filter/--limit default to None on
+        // Query. Drift would silently apply a stale filter or index hint.
+        let cmd = parse_ddb(&["query", "users", "--expr", "id = :id"]).expect("parse");
+        match cmd {
+            DdbCmd::Query {
+                table,
+                expr,
+                vals,
+                names,
+                index,
+                filter,
+                limit,
+                consistent,
+            } => {
+                assert_eq!(table, "users");
+                assert_eq!(expr, "id = :id");
+                assert!(vals.is_none());
+                assert!(names.is_none());
+                assert!(index.is_none());
+                assert!(filter.is_none());
+                assert!(limit.is_none());
+                assert!(!consistent);
+            }
+            _ => panic!("expected Query"),
+        }
+        // All optionals supplied — verify they thread through.
+        let cmd = parse_ddb(&[
+            "query",
+            "users",
+            "--expr",
+            "id = :id",
+            "--vals",
+            r#"{":id":42}"#,
+            "--index",
+            "gsi1",
+            "--limit",
+            "50",
+        ])
+        .expect("parse");
+        match cmd {
+            DdbCmd::Query {
+                vals, index, limit, ..
+            } => {
+                assert_eq!(vals.as_deref(), Some(r#"{":id":42}"#));
+                assert_eq!(index.as_deref(), Some("gsi1"));
+                assert_eq!(limit, Some(50));
+            }
+            _ => panic!("expected Query"),
+        }
+    }
+
+    #[test]
+    fn ddb_scan_page_size_optional_and_describe_requires_table() {
+        // Pin: --page-size unset = SDK default (let DynamoDB pick); supplying
+        // it threads through as Some(N). Describe requires table positional.
+        let cmd = parse_ddb(&["scan", "users"]).expect("parse");
+        match cmd {
+            DdbCmd::Scan {
+                page_size, limit, ..
+            } => {
+                assert!(page_size.is_none());
+                assert!(limit.is_none());
+            }
+            _ => panic!("expected Scan"),
+        }
+        let cmd = parse_ddb(&["scan", "users", "--page-size", "100"]).expect("parse");
+        match cmd {
+            DdbCmd::Scan { page_size, .. } => assert_eq!(page_size, Some(100)),
+            _ => panic!("expected Scan"),
+        }
+        assert_eq!(
+            parse_ddb(&["describe"]).unwrap_err().kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
 }
