@@ -454,4 +454,39 @@ mod tests {
         let (b, _) = parse_s3_uri("s3://バケット/k").unwrap();
         assert_eq!(b, "バケット");
     }
+
+    // ─── parse_s3_uri error-shape contracts ──────────────────────────
+    //
+    // The CLI surfaces these errors directly to the user. Pin the
+    // message format so refactors of `anyhow!` strings don't silently
+    // mutate the user-facing error.
+
+    #[test]
+    fn parse_s3_uri_error_mentions_expected_form() {
+        let err = parse_s3_uri("not-an-s3-uri").unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("s3://bucket/key"),
+            "error should hint at the expected URI shape; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_s3_uri_error_echoes_offending_input() {
+        // Users grep their shell history for the broken URI; echoing
+        // the input makes that search hit.
+        let err = parse_s3_uri("http://wrong-scheme/x").unwrap_err();
+        let msg = format!("{err}");
+        assert!(
+            msg.contains("http://wrong-scheme/x"),
+            "error should echo offending input; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_s3_uri_empty_input_is_rejected() {
+        let err = parse_s3_uri("").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("s3://bucket/key"));
+    }
 }
