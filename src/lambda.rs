@@ -159,3 +159,164 @@ async fn list(client: &Client) -> Result<()> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Wrap LambdaCmd so we can exercise clap's binding rules from tests
+    /// without booting the full `stryke-aws-helper` binary.
+    #[derive(Parser, Debug)]
+    struct TestCli {
+        #[command(subcommand)]
+        cmd: LambdaCmd,
+    }
+
+    fn parse(args: &[&str]) -> Result<LambdaCmd, clap::Error> {
+        let mut argv = vec!["stryke-aws-helper"];
+        argv.extend_from_slice(args);
+        TestCli::try_parse_from(argv).map(|c| c.cmd)
+    }
+
+    // ─── enum shape ────────────────────────────────────────────────────
+
+    #[test]
+    fn list_subcommand_parses_as_unit_variant() {
+        let cmd = parse(&["list"]).expect("parse");
+        assert!(matches!(cmd, LambdaCmd::List));
+    }
+
+    #[test]
+    fn invoke_requires_function_name_positional() {
+        let err = parse(&["invoke"]).expect_err("missing name must error");
+        assert_eq!(err.kind(), clap::error::ErrorKind::MissingRequiredArgument);
+    }
+
+    // ─── invoke flag defaults — these are wire-level contracts ──────────
+
+    #[test]
+    fn invoke_payload_default_is_empty_json_object() {
+        // Pin: missing --payload must default to "{}" so Lambda gets
+        // a syntactically-valid event even when the function takes no input.
+        let cmd = parse(&["invoke", "my-fn"]).expect("parse");
+        match cmd {
+            LambdaCmd::Invoke { payload, .. } => assert_eq!(payload, "{}"),
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    #[test]
+    fn invoke_invocation_type_default_is_request_response_sync() {
+        // Pin: default must stay synchronous. Flipping to "event" (async)
+        // would silently change the behaviour of `aws lambda invoke` —
+        // users would stop getting return values back without realizing.
+        let cmd = parse(&["invoke", "my-fn"]).expect("parse");
+        match cmd {
+            LambdaCmd::Invoke {
+                invocation_type, ..
+            } => {
+                assert_eq!(invocation_type, "request-response");
+            }
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    #[test]
+    fn invoke_qualifier_defaults_to_none() {
+        // No --qualifier = invoke $LATEST. Pin so a refactor can't
+        // accidentally pin to a specific version.
+        let cmd = parse(&["invoke", "my-fn"]).expect("parse");
+        match cmd {
+            LambdaCmd::Invoke { qualifier, .. } => assert!(qualifier.is_none()),
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    #[test]
+    fn invoke_log_tail_defaults_to_false() {
+        // Returning the log tail bloats every response — must be opt-in.
+        let cmd = parse(&["invoke", "my-fn"]).expect("parse");
+        match cmd {
+            LambdaCmd::Invoke { log_tail, .. } => assert!(!log_tail),
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    // ─── invoke flag wiring ─────────────────────────────────────────────
+
+    #[test]
+    fn invoke_wires_all_explicit_flags() {
+        let cmd = parse(&[
+            "invoke",
+            "my-fn",
+            "--payload",
+            r#"{"k":"v"}"#,
+            "--invocation-type",
+            "event",
+            "--qualifier",
+            "v3",
+            "--log-tail",
+        ])
+        .expect("parse");
+        match cmd {
+            LambdaCmd::Invoke {
+                name,
+                payload,
+                invocation_type,
+                qualifier,
+                log_tail,
+            } => {
+                assert_eq!(name, "my-fn");
+                assert_eq!(payload, r#"{"k":"v"}"#);
+                assert_eq!(invocation_type, "event");
+                assert_eq!(qualifier.as_deref(), Some("v3"));
+                assert!(log_tail);
+            }
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    #[test]
+    fn invoke_payload_dash_means_read_stdin_per_doc_comment() {
+        // The CLI accepts "-" as a sentinel meaning read-from-stdin.
+        // Pin so the sentinel survives renames; the dispatch logic
+        // upstream handles the actual stdin read.
+        let cmd = parse(&["invoke", "my-fn", "--payload", "-"]).expect("parse");
+        match cmd {
+            LambdaCmd::Invoke { payload, .. } => assert_eq!(payload, "-"),
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    #[test]
+    fn invoke_invocation_type_accepts_event_async_form() {
+        // Sanity: `event` is the documented async value. clap doesn't
+        // restrict the string (no value_parser), so this is more a pin
+        // that future tightening with a value_parser must still accept
+        // the existing public values.
+        let cmd = parse(&["invoke", "my-fn", "--invocation-type", "event"]).expect("parse");
+        match cmd {
+            LambdaCmd::Invoke {
+                invocation_type, ..
+            } => assert_eq!(invocation_type, "event"),
+            _ => panic!("expected Invoke"),
+        }
+    }
+
+    // ─── --help / --version don't crash ─────────────────────────────────
+
+    #[test]
+    fn invoke_help_succeeds_and_mentions_payload_default() {
+        // `--help` returns a special error in clap; assert it's the
+        // help-display variant and the rendered help mentions the
+        // payload default so users discover it.
+        let err = parse(&["invoke", "--help"]).expect_err("help");
+        assert_eq!(err.kind(), clap::error::ErrorKind::DisplayHelp);
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("{}"),
+            "help should show payload default '{{}}', got: {rendered}"
+        );
+    }
+}
