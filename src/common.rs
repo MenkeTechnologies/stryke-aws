@@ -67,10 +67,7 @@ pub async fn read_input_bytes(path: &str) -> Result<Vec<u8>> {
         let mut buf = Vec::new();
         use tokio::io::AsyncReadExt;
         let mut stdin = tokio::io::stdin();
-        stdin
-            .read_to_end(&mut buf)
-            .await
-            .context("reading stdin")?;
+        stdin.read_to_end(&mut buf).await.context("reading stdin")?;
         Ok(buf)
     } else {
         tokio::fs::read(path)

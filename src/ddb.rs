@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::io::{self, BufRead, BufReader, BufWriter, Write};
 
 use anyhow::{anyhow, bail, Context, Result};
-use aws_sdk_dynamodb::types::{AttributeValue, WriteRequest, DeleteRequest, PutRequest};
+use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, PutRequest, WriteRequest};
 use aws_sdk_dynamodb::Client;
 use base64::engine::general_purpose::STANDARD as B64;
 use base64::Engine as _;
@@ -84,17 +84,57 @@ pub enum DdbCmd {
 pub async fn dispatch(cfg: &aws_config::SdkConfig, cmd: DdbCmd) -> Result<()> {
     let client = Client::new(cfg);
     match cmd {
-        DdbCmd::Get { table, key, consistent } => get(&client, &table, &key, consistent).await,
+        DdbCmd::Get {
+            table,
+            key,
+            consistent,
+        } => get(&client, &table, &key, consistent).await,
         DdbCmd::Put { table, item } => put(&client, &table, &item).await,
         DdbCmd::Delete { table, key } => delete(&client, &table, &key).await,
         DdbCmd::Query {
-            table, expr, vals, names, index, filter, limit, consistent,
-        } => query(&client, &table, &expr, vals.as_deref(), names.as_deref(),
-                   index.as_deref(), filter.as_deref(), limit, consistent).await,
+            table,
+            expr,
+            vals,
+            names,
+            index,
+            filter,
+            limit,
+            consistent,
+        } => {
+            query(
+                &client,
+                &table,
+                &expr,
+                vals.as_deref(),
+                names.as_deref(),
+                index.as_deref(),
+                filter.as_deref(),
+                limit,
+                consistent,
+            )
+            .await
+        }
         DdbCmd::Scan {
-            table, filter, vals, names, index, limit, page_size,
-        } => scan(&client, &table, filter.as_deref(), vals.as_deref(),
-                  names.as_deref(), index.as_deref(), limit, page_size).await,
+            table,
+            filter,
+            vals,
+            names,
+            index,
+            limit,
+            page_size,
+        } => {
+            scan(
+                &client,
+                &table,
+                filter.as_deref(),
+                vals.as_deref(),
+                names.as_deref(),
+                index.as_deref(),
+                limit,
+                page_size,
+            )
+            .await
+        }
         DdbCmd::BatchWrite { table } => batch_write(&client, &table).await,
         DdbCmd::Tables => tables(&client).await,
         DdbCmd::Describe { table } => describe(&client, &table).await,
@@ -119,9 +159,7 @@ pub fn json_to_av(v: &Value) -> AttributeValue {
             }
             AttributeValue::S(s.clone())
         }
-        Value::Array(arr) => {
-            AttributeValue::L(arr.iter().map(json_to_av).collect())
-        }
+        Value::Array(arr) => AttributeValue::L(arr.iter().map(json_to_av).collect()),
         Value::Object(obj) => {
             let m: HashMap<String, AttributeValue> = obj
                 .iter()
@@ -191,10 +229,7 @@ pub fn av_to_json(av: &AttributeValue) -> Value {
 pub fn json_obj_to_av_map(s: &str) -> Result<HashMap<String, AttributeValue>> {
     let v: Value = serde_json::from_str(s).context("parsing JSON object")?;
     match v {
-        Value::Object(o) => Ok(o
-            .into_iter()
-            .map(|(k, vv)| (k, json_to_av(&vv)))
-            .collect()),
+        Value::Object(o) => Ok(o.into_iter().map(|(k, vv)| (k, json_to_av(&vv))).collect()),
         _ => bail!("expected a JSON object"),
     }
 }
@@ -427,7 +462,9 @@ async fn batch_write(client: &Client, table: &str) -> Result<()> {
 
         let req = match &v {
             Value::Object(obj) if obj.contains_key("_delete") => {
-                let key_val = obj.get("_delete").ok_or_else(|| anyhow!("_delete missing"))?;
+                let key_val = obj
+                    .get("_delete")
+                    .ok_or_else(|| anyhow!("_delete missing"))?;
                 let key_obj = key_val
                     .as_object()
                     .ok_or_else(|| anyhow!("_delete must be an object"))?;
@@ -465,11 +502,7 @@ async fn batch_write(client: &Client, table: &str) -> Result<()> {
     emit_json(&json!({ "written": total }))
 }
 
-async fn flush_batch(
-    client: &Client,
-    table: &str,
-    batch: &mut Vec<WriteRequest>,
-) -> Result<()> {
+async fn flush_batch(client: &Client, table: &str, batch: &mut Vec<WriteRequest>) -> Result<()> {
     let mut req_items = HashMap::new();
     req_items.insert(table.to_string(), std::mem::take(batch));
     let resp = client
@@ -524,6 +557,45 @@ async fn tables(client: &Client) -> Result<()> {
     Ok(())
 }
 
+async fn describe(client: &Client, table: &str) -> Result<()> {
+    let resp = client
+        .describe_table()
+        .table_name(table)
+        .send()
+        .await
+        .context("describe_table")?;
+    let t = resp.table.ok_or_else(|| anyhow!("no table in response"))?;
+    let key_schema: Vec<Value> = t
+        .key_schema()
+        .iter()
+        .map(|k| {
+            json!({
+                "attribute": k.attribute_name(),
+                "type": k.key_type().as_str(),
+            })
+        })
+        .collect();
+    let attrs: Vec<Value> = t
+        .attribute_definitions()
+        .iter()
+        .map(|a| {
+            json!({
+                "name": a.attribute_name(),
+                "type": a.attribute_type().as_str(),
+            })
+        })
+        .collect();
+    emit_json(&json!({
+        "name": t.table_name(),
+        "status": t.table_status().map(|s| s.as_str().to_string()),
+        "item_count": t.item_count(),
+        "size_bytes": t.table_size_bytes(),
+        "key_schema": key_schema,
+        "attributes": attrs,
+        "arn": t.table_arn(),
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -553,8 +625,8 @@ mod tests {
             AttributeValue::N(s) => assert_eq!(s, "123"),
             other => panic!("expected N, got {other:?}"),
         }
-        match json_to_av(&json!(3.14)) {
-            AttributeValue::N(s) => assert_eq!(s, "3.14"),
+        match json_to_av(&json!(3.5_f64)) {
+            AttributeValue::N(s) => assert_eq!(s, "3.5"),
             other => panic!("expected N, got {other:?}"),
         }
     }
@@ -993,7 +1065,10 @@ mod tests {
 
     #[test]
     fn json_to_av_true_bool() {
-        assert!(matches!(json_to_av(&json!(true)), AttributeValue::Bool(true)));
+        assert!(matches!(
+            json_to_av(&json!(true)),
+            AttributeValue::Bool(true)
+        ));
     }
 
     #[test]
@@ -1124,46 +1199,9 @@ mod tests {
 
     #[test]
     fn json_to_av_null_explicit() {
-        assert!(matches!(json_to_av(&json!(null)), AttributeValue::Null(true)));
+        assert!(matches!(
+            json_to_av(&json!(null)),
+            AttributeValue::Null(true)
+        ));
     }
-
-}
-
-async fn describe(client: &Client, table: &str) -> Result<()> {
-    let resp = client
-        .describe_table()
-        .table_name(table)
-        .send()
-        .await
-        .context("describe_table")?;
-    let t = resp.table.ok_or_else(|| anyhow!("no table in response"))?;
-    let key_schema: Vec<Value> = t
-        .key_schema()
-        .iter()
-        .map(|k| {
-            json!({
-                "attribute": k.attribute_name(),
-                "type": k.key_type().as_str(),
-            })
-        })
-        .collect();
-    let attrs: Vec<Value> = t
-        .attribute_definitions()
-        .iter()
-        .map(|a| {
-            json!({
-                "name": a.attribute_name(),
-                "type": a.attribute_type().as_str(),
-            })
-        })
-        .collect();
-    emit_json(&json!({
-        "name": t.table_name(),
-        "status": t.table_status().map(|s| s.as_str().to_string()),
-        "item_count": t.item_count(),
-        "size_bytes": t.table_size_bytes(),
-        "key_schema": key_schema,
-        "attributes": attrs,
-        "arn": t.table_arn(),
-    }))
 }

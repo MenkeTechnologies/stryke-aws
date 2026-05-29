@@ -58,12 +58,29 @@ pub enum SqsCmd {
 pub async fn dispatch(cfg: &aws_config::SdkConfig, cmd: SqsCmd) -> Result<()> {
     let client = Client::new(cfg);
     match cmd {
-        SqsCmd::Send { queue_url, body, delay_seconds, dedup_id, group_id } => {
-            send(&client, &queue_url, &body, delay_seconds, dedup_id.as_deref(), group_id.as_deref()).await
+        SqsCmd::Send {
+            queue_url,
+            body,
+            delay_seconds,
+            dedup_id,
+            group_id,
+        } => {
+            send(
+                &client,
+                &queue_url,
+                &body,
+                delay_seconds,
+                dedup_id.as_deref(),
+                group_id.as_deref(),
+            )
+            .await
         }
-        SqsCmd::Receive { queue_url, max, wait, visibility } => {
-            receive(&client, &queue_url, max, wait, visibility).await
-        }
+        SqsCmd::Receive {
+            queue_url,
+            max,
+            wait,
+            visibility,
+        } => receive(&client, &queue_url, max, wait, visibility).await,
         SqsCmd::Delete { queue_url, receipt } => delete(&client, &queue_url, &receipt).await,
         SqsCmd::Purge { queue_url } => purge(&client, &queue_url).await,
         SqsCmd::Attrs { queue_url } => attrs(&client, &queue_url).await,

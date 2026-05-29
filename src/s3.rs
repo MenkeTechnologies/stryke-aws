@@ -11,7 +11,9 @@ use aws_sdk_s3::Client;
 use clap::Subcommand;
 use serde_json::json;
 
-use crate::common::{emit_json, emit_ndjson_line, parse_s3_uri, read_input_bytes, write_output_bytes};
+use crate::common::{
+    emit_json, emit_ndjson_line, parse_s3_uri, read_input_bytes, write_output_bytes,
+};
 
 #[derive(Subcommand, Debug)]
 pub enum S3Cmd {
@@ -82,7 +84,17 @@ pub async fn dispatch(cfg: &aws_config::SdkConfig, cmd: S3Cmd) -> Result<()> {
             content_type,
             cache_control,
             buffered,
-        } => put(&client, &uri, &input, content_type.as_deref(), cache_control.as_deref(), buffered).await,
+        } => {
+            put(
+                &client,
+                &uri,
+                &input,
+                content_type.as_deref(),
+                cache_control.as_deref(),
+                buffered,
+            )
+            .await
+        }
         S3Cmd::Head { uri } => head(&client, &uri).await,
         S3Cmd::Rm { uri } => rm(&client, &uri).await,
         S3Cmd::Presign {
@@ -109,10 +121,7 @@ async fn ls(
     let mut emitted: usize = 0;
 
     loop {
-        let mut req = client
-            .list_objects_v2()
-            .bucket(&bucket)
-            .max_keys(page_size);
+        let mut req = client.list_objects_v2().bucket(&bucket).max_keys(page_size);
         if !prefix.is_empty() {
             req = req.prefix(&prefix);
         }
@@ -127,10 +136,7 @@ async fn ls(
         // Common prefixes (when --delimiter is set) come back as "directories".
         for cp in resp.common_prefixes() {
             if let Some(p) = cp.prefix() {
-                emit_ndjson_line(
-                    &mut out,
-                    &json!({ "type": "prefix", "key": p }),
-                )?;
+                emit_ndjson_line(&mut out, &json!({ "type": "prefix", "key": p }))?;
                 emitted += 1;
                 if limit.is_some_and(|l| emitted >= l) {
                     return Ok(());
@@ -187,7 +193,12 @@ async fn get(client: &Client, uri: &str, output: &str) -> Result<()> {
         .send()
         .await
         .context("get_object")?;
-    let data = resp.body.collect().await.context("collecting body")?.into_bytes();
+    let data = resp
+        .body
+        .collect()
+        .await
+        .context("collecting body")?
+        .into_bytes();
     write_output_bytes(output, &data).await?;
     Ok(())
 }
@@ -268,8 +279,8 @@ async fn rm(client: &Client, uri: &str) -> Result<()> {
 
 async fn presign(client: &Client, uri: &str, method: &str, expires: u64) -> Result<()> {
     let (bucket, key) = parse_s3_uri(uri)?;
-    let cfg = PresigningConfig::expires_in(Duration::from_secs(expires))
-        .context("invalid expires")?;
+    let cfg =
+        PresigningConfig::expires_in(Duration::from_secs(expires)).context("invalid expires")?;
     let url = match method.to_ascii_uppercase().as_str() {
         "GET" => client
             .get_object()

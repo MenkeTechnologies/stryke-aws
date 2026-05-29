@@ -44,7 +44,17 @@ pub async fn dispatch(cfg: &aws_config::SdkConfig, cmd: LambdaCmd) -> Result<()>
             invocation_type,
             qualifier,
             log_tail,
-        } => invoke(&client, &name, &payload, &invocation_type, qualifier.as_deref(), log_tail).await,
+        } => {
+            invoke(
+                &client,
+                &name,
+                &payload,
+                &invocation_type,
+                qualifier.as_deref(),
+                log_tail,
+            )
+            .await
+        }
         LambdaCmd::List => list(&client).await,
     }
 }
@@ -72,7 +82,9 @@ async fn invoke(
         "request-response" | "sync" => InvocationType::RequestResponse,
         "event" | "async" => InvocationType::Event,
         "dry-run" | "dryrun" => InvocationType::DryRun,
-        other => anyhow::bail!("invocation_type: {other} (expected request-response|event|dry-run)"),
+        other => {
+            anyhow::bail!("invocation_type: {other} (expected request-response|event|dry-run)")
+        }
     };
     let log_type = if log_tail {
         aws_sdk_lambda::types::LogType::Tail
@@ -95,9 +107,8 @@ async fn invoke(
         .payload
         .as_ref()
         .map(|b| {
-            serde_json::from_slice(b.as_ref()).unwrap_or_else(|_| {
-                Value::String(String::from_utf8_lossy(b.as_ref()).to_string())
-            })
+            serde_json::from_slice(b.as_ref())
+                .unwrap_or_else(|_| Value::String(String::from_utf8_lossy(b.as_ref()).to_string()))
         })
         .unwrap_or(Value::Null);
 

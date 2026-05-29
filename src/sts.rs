@@ -33,12 +33,25 @@ pub async fn dispatch(cfg: &aws_config::SdkConfig, cmd: StsCmd) -> Result<()> {
             session,
             duration,
             external_id,
-        } => assume_role(&client, &role_arn, &session, duration, external_id.as_deref()).await,
+        } => {
+            assume_role(
+                &client,
+                &role_arn,
+                &session,
+                duration,
+                external_id.as_deref(),
+            )
+            .await
+        }
     }
 }
 
 pub async fn caller_identity(client: &Client) -> Result<()> {
-    let resp = client.get_caller_identity().send().await.context("get_caller_identity")?;
+    let resp = client
+        .get_caller_identity()
+        .send()
+        .await
+        .context("get_caller_identity")?;
     emit_json(&json!({
         "account": resp.account(),
         "arn": resp.arn(),
@@ -62,12 +75,14 @@ async fn assume_role(
         req = req.external_id(eid);
     }
     let resp = req.send().await.context("assume_role")?;
-    let creds = resp.credentials().ok_or_else(|| anyhow::anyhow!("no credentials in response"))?;
+    let creds = resp
+        .credentials()
+        .ok_or_else(|| anyhow::anyhow!("no credentials in response"))?;
     emit_json(&json!({
         "access_key_id": creds.access_key_id(),
         "secret_access_key": creds.secret_access_key(),
         "session_token": creds.session_token(),
         "expiration": creds.expiration().to_string(),
-        "assumed_role_arn": resp.assumed_role_user().and_then(|u| Some(u.arn().to_string())),
+        "assumed_role_arn": resp.assumed_role_user().map(|u| u.arn().to_string()),
     }))
 }
