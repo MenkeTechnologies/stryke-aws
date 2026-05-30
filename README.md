@@ -332,9 +332,6 @@ stryke-aws/
     SQS.stk                        # `use AWS::SQS`
     Lambda.stk                     # `use AWS::Lambda`
     STS.stk                        # `use AWS::STS`
-  bin/
-    aws.stk                        # `aws` CLI
-    aws-build.stk
   t/
     test_aws.stk                   # end-to-end (gated on creds + opt-in env vars)
   examples/
