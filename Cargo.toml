@@ -6,6 +6,7 @@ description = "AWS bridge binary for the stryke `aws` package."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-aws"
+homepage = "https://menketechnologies.github.io/stryke-aws/"
 publish = false
 
 [[bin]]
