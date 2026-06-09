@@ -1,5 +1,5 @@
 [package]
-name = "aws"
+name = "stryke-aws"
 version = "0.2.0"
 description = "AWS client (S3, DynamoDB, SQS, Lambda, STS) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region. v0.2.0 focused subset; remaining ops can be added incrementally."
 authors = ["MenkeTechnologies"]
