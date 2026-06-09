@@ -1,18 +1,18 @@
-# lib/STS.stk — `use AWS::STS`
+## lib/STS.stk — `use AWS::STS`
 
 package AWS::STS
 
 use AWS
 
-# Returns { account, arn, user_id }.
+## Returns { account, arn, user_id }.
 fn AWS::STS::caller_identity (%opts) {
     my @argv = AWS::_conn_argv(\%opts)
     push @argv, "sts", "caller-identity"
     AWS::_run_json(\@argv)
 }
 
-# Returns { access_key_id, secret_access_key, session_token, expiration,
-#           assumed_role_arn }.
+## Returns { access_key_id, secret_access_key, session_token, expiration,
+##           assumed_role_arn }.
 fn AWS::STS::assume_role ($role_arn, %opts) {
     die "AWS::STS::assume_role: session => '…' is required" unless defined $opts{session}
     my @argv = AWS::_conn_argv(\%opts)

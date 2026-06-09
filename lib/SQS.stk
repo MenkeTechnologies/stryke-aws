@@ -1,11 +1,11 @@
-# lib/SQS.stk — `use AWS::SQS`
+## lib/SQS.stk — `use AWS::SQS`
 
 package AWS::SQS
 
 use AWS
 
-# Send a single message.
-# Returns { message_id, md5_of_body, sequence_number? }.
+## Send a single message.
+## Returns { message_id, md5_of_body, sequence_number? }.
 fn AWS::SQS::send ($queue, $body, %opts) {
     my @argv = AWS::_conn_argv(\%opts)
     push @argv, "sqs", "send", AWS::_shq($queue), "--body", AWS::_shq($body)
@@ -15,7 +15,7 @@ fn AWS::SQS::send ($queue, $body, %opts) {
     AWS::_run_json(\@argv)
 }
 
-# Long-poll. Returns 0..N message hashrefs.
+## Long-poll. Returns 0..N message hashrefs.
 fn AWS::SQS::receive ($queue, %opts) {
     my @argv = AWS::_conn_argv(\%opts)
     push @argv, "sqs", "receive", AWS::_shq($queue)
@@ -43,7 +43,7 @@ fn AWS::SQS::attrs ($queue, %opts) {
     AWS::_run_json(\@argv)
 }
 
-# List queue URLs (with optional prefix).
+## List queue URLs (with optional prefix).
 fn AWS::SQS::list (%opts) {
     my @argv = AWS::_conn_argv(\%opts)
     push @argv, "sqs", "list"
@@ -51,8 +51,8 @@ fn AWS::SQS::list (%opts) {
     map { $_->{url} } AWS::_run_ndjson(\@argv)
 }
 
-# Convenience: long-poll a queue and pump every message through a
-# callback, deleting on success. Returns the count handled.
+## Convenience: long-poll a queue and pump every message through a
+## callback, deleting on success. Returns the count handled.
 fn AWS::SQS::pump ($queue, %opts) {
     die "AWS::SQS::pump: callback => sub { … } is required" unless defined $opts{callback}
     my $cb = $opts{callback}

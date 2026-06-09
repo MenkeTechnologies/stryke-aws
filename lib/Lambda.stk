@@ -1,12 +1,12 @@
-# lib/Lambda.stk — `use AWS::Lambda`
+## lib/Lambda.stk — `use AWS::Lambda`
 
 package AWS::Lambda
 
 use AWS
 
-# Sync invoke. Returns { status_code, function_error, executed_version, log_tail, payload }.
-# $payload is a hashref / arrayref / scalar that will be encoded as JSON
-# for the function. Pass `invocation_type => "event"` for fire-and-forget.
+## Sync invoke. Returns { status_code, function_error, executed_version, log_tail, payload }.
+## $payload is a hashref / arrayref / scalar that will be encoded as JSON
+## for the function. Pass `invocation_type => "event"` for fire-and-forget.
 fn AWS::Lambda::invoke ($name, $payload, %opts) {
     my @argv = AWS::_conn_argv(\%opts)
     push @argv, "lambda", "invoke", AWS::_shq($name)
@@ -17,8 +17,8 @@ fn AWS::Lambda::invoke ($name, $payload, %opts) {
     AWS::_run_json(\@argv)
 }
 
-# Convenience: sync invoke, return just the payload hash (or undef when
-# function_error fires).
+## Convenience: sync invoke, return just the payload hash (or undef when
+## function_error fires).
 fn AWS::Lambda::call ($name, $payload, %opts) {
     my $r = AWS::Lambda::invoke($name, $payload, %opts)
     return undef if defined $r->{function_error}
