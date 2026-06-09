@@ -1,117 +1,76 @@
 ## lib/S3.stk — `use AWS::S3`
 ##
-## Wraps the `s3` subcommand surface of stryke-aws-helper. Object URIs use
-## the standard `s3://bucket/key` form.
+## URI-flavored wrappers around `AWS::s3_*` from the v0.2.0 cdylib.
+## Object URIs use the standard `s3://bucket/key` form.
 
 package AWS::S3
 
 use AWS
 
-## Returns an array of NDJSON-decoded rows. Each row is one of:
-##   { type=>"object",  key, size, etag, last_modified, storage_class }
-##   { type=>"prefix",  key }
-fn AWS::S3::ls ($uri, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "ls", AWS::_shq($uri)
-    if (defined $opts{page_size}) {
-        push @argv, "--page-size", AWS::_shq($opts{page_size})
-    }
-    if (defined $opts{limit}) {
-        push @argv, "--limit", AWS::_shq($opts{limit})
-    }
-    if (defined $opts{delimiter}) {
-        push @argv, "--delimiter", AWS::_shq($opts{delimiter})
-    }
-    AWS::_run_ndjson(\@argv)
+## Internal: parse `s3://bucket/key` → ($bucket, $key). `$key` may be "".
+fn AWS::S3::_parse ($uri) {
+    die "AWS::S3: expected s3://bucket/key, got `$uri`" unless $uri =~ m{^s3://([^/]+)/?(.*)$}
+    ($1, $2)
 }
 
-## Returns the object's body as a byte string (scalar). Pass
-## `output => "/path"` to write to a file instead and get the path back.
+## Returns an array of object hashrefs under the URI prefix.
+## Each row: { key, size }.
+fn AWS::S3::ls ($uri, %opts) {
+    my ($bucket, $prefix) = AWS::S3::_parse($uri)
+    AWS::s3_list_objects($bucket, prefix => $prefix, %opts)
+}
+
+## Returns the object's body as a byte string. Pass `output => "/path"`
+## to write to a file instead and get the path back.
 fn AWS::S3::get ($uri, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "get", AWS::_shq($uri)
+    my ($bucket, $key) = AWS::S3::_parse($uri)
+    my $body = AWS::s3_get_object($bucket, $key, %opts)
     if (defined $opts{output}) {
-        push @argv, "--output", AWS::_shq($opts{output})
-        my $rc = system join(" ", @argv)
-        die "AWS::S3::get: helper exited ($rc)" if $rc != 0
+        open my $fh, ">", $opts{output} or die "AWS::S3::get: open $opts{output}: $!"
+        print $fh $body
+        close $fh
         return $opts{output}
     }
-    push @argv, "--output", "-"
-    AWS::_run_raw(\@argv)
+    $body
 }
 
 ## Upload a scalar string OR a local file. Pass `data => $bytes` or
-## `input => "/local/path"`. Returns the put_object response object.
+## `input => "/local/path"`. Returns the put-object response hash.
 fn AWS::S3::put ($uri, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "put", AWS::_shq($uri)
-    if (defined $opts{content_type}) {
-        push @argv, "--content-type", AWS::_shq($opts{content_type})
-    }
-    if (defined $opts{cache_control}) {
-        push @argv, "--cache-control", AWS::_shq($opts{cache_control})
-    }
-
+    my ($bucket, $key) = AWS::S3::_parse($uri)
+    my $body
     if (defined $opts{data}) {
-        push @argv, "--input", "-"
-        # Capture stdout into a temp file so we can return the JSON result.
-        # (We can't easily do bidirectional pipes from stryke.)
-        my $tmp = "/tmp/stryke-aws-put-$$-$." . time()
-        my $cmd = join(" ", @argv) . " > " . AWS::_shq($tmp)
-        open my $fh, "|-", $cmd or die "AWS::S3::put: spawn failed: $!"
-        print $fh $opts{data}
-        close $fh or do {
-            unlink $tmp
-            die "AWS::S3::put: helper exited ($?)"
-        }
-        my $raw = ""
-        if (open my $rf, "<", $tmp) {
-            local $/
-            $raw = <$rf>
-            close $rf
-        }
-        unlink $tmp
-        return from_json $raw
-    }
-
-    if (defined $opts{input}) {
-        push @argv, "--input", AWS::_shq($opts{input})
+        $body = $opts{data}
+    } elsif (defined $opts{input}) {
+        open my $fh, "<", $opts{input} or die "AWS::S3::put: open $opts{input}: $!"
+        local $/
+        $body = <$fh>
+        close $fh
     } else {
         die "AWS::S3::put: pass data => \$bytes or input => \"path\""
     }
-    AWS::_run_json(\@argv)
+    AWS::s3_put_object($bucket, $key, $body, %opts)
 }
 
+## HEAD an object. Deferred in v0.2.0 (cdylib doesn't expose head_object yet).
 fn AWS::S3::head ($uri, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "head", AWS::_shq($uri)
-    AWS::_run_json(\@argv)
+    die "AWS::S3::head: deferred in v0.2.0 cdylib — use AWS::S3::ls(s3://bucket/prefix) and filter, or add aws__s3_head_object"
 }
 
+## Delete an object.
 fn AWS::S3::rm ($uri, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "rm", AWS::_shq($uri)
-    AWS::_run_json(\@argv)
+    my ($bucket, $key) = AWS::S3::_parse($uri)
+    AWS::s3_delete_object($bucket, $key, %opts) ? { deleted => 1 } : { deleted => 0 }
 }
 
-## %opts: method => "GET"|"PUT" (default GET), expires => seconds (default 3600)
+## Pre-signed URL. Deferred in v0.2.0.
 fn AWS::S3::presign ($uri, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "presign", AWS::_shq($uri)
-    if (defined $opts{method}) {
-        push @argv, "--method", AWS::_shq($opts{method})
-    }
-    if (defined $opts{expires}) {
-        push @argv, "--expires", AWS::_shq($opts{expires})
-    }
-    AWS::_run_json(\@argv)
+    die "AWS::S3::presign: deferred in v0.2.0 cdylib — add aws__s3_presign to the cdylib export list"
 }
 
-## List buckets — array of {name, creation_date}.
+## List buckets — array of bucket name strings.
 fn AWS::S3::buckets (%opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "s3", "buckets"
-    AWS::_run_ndjson(\@argv)
+    AWS::s3_list_buckets(%opts)
 }
 
 1

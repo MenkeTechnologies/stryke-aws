@@ -1,34 +1,33 @@
 ## lib/Lambda.stk — `use AWS::Lambda`
+##
+## Wraps `AWS::lambda_*` from the v0.2.0 cdylib.
 
 package AWS::Lambda
 
 use AWS
 
-## Sync invoke. Returns { status_code, function_error, executed_version, log_tail, payload }.
-## $payload is a hashref / arrayref / scalar that will be encoded as JSON
-## for the function. Pass `invocation_type => "event"` for fire-and-forget.
+## Sync invoke. Returns the full response hash:
+##   { function, status_code, result }
+## `$payload` is encoded as JSON and sent to the function.
+## `invocation_type => "event"` (fire-and-forget) is deferred in v0.2.0.
 fn AWS::Lambda::invoke ($name, $payload, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "lambda", "invoke", AWS::_shq($name)
-    push @argv, "--payload", AWS::_shq(to_json $payload)
-    push @argv, "--invocation-type", AWS::_shq($opts{invocation_type}) if defined $opts{invocation_type}
-    push @argv, "--qualifier",       AWS::_shq($opts{qualifier})       if defined $opts{qualifier}
-    push @argv, "--log-tail" if $opts{log_tail}
-    AWS::_run_json(\@argv)
+    if (defined $opts{invocation_type} && $opts{invocation_type} eq "event") {
+        die "AWS::Lambda::invoke: invocation_type=event deferred in v0.2.0 cdylib"
+    }
+    AWS::lambda_invoke($name, $payload, %opts)
 }
 
-## Convenience: sync invoke, return just the payload hash (or undef when
-## function_error fires).
+## Convenience: sync invoke, return just the payload (or undef if the
+## function returned a non-success status code).
 fn AWS::Lambda::call ($name, $payload, %opts) {
     my $r = AWS::Lambda::invoke($name, $payload, %opts)
-    return undef if defined $r->{function_error}
-    $r->{payload}
+    return undef unless defined $r && ($r->{status_code} // 0) == 200
+    $r->{result}
 }
 
+## List function names.
 fn AWS::Lambda::list (%opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "lambda", "list"
-    AWS::_run_ndjson(\@argv)
+    AWS::lambda_list_functions(%opts)
 }
 
 1

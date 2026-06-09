@@ -1,8 +1,8 @@
 ## lib/Dynamo.stk — `use AWS::Dynamo`
 ##
-## Plain-JSON in, plain-JSON out. The helper handles AttributeValue
-## envelopes internally — stryke users pass `{ id => 42 }`, not
-## `{ id => { N => "42" } }`.
+## Wraps `AWS::ddb_*` from the v0.2.0 cdylib. Plain-JSON in, plain-JSON
+## out. The cdylib handles AttributeValue envelopes internally — stryke
+## users pass `{ id => 42 }`, not `{ id => { N => "42" } }`.
 
 package AWS::Dynamo
 
@@ -10,111 +10,44 @@ use AWS
 
 ## Returns the item hashref, or undef when no item matches.
 fn AWS::Dynamo::get ($table, $key, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "get", AWS::_shq($table), "--key", AWS::_shq(to_json $key)
-    push @argv, "--consistent" if $opts{consistent}
-    my $v = AWS::_run_json(\@argv)
-    defined $v && ref($v) eq "HASH" ? $v : undef
+    AWS::ddb_get_item($table, $key, %opts)
 }
 
-## Upserts one item. Returns { ok: 1 }.
+## Upserts one item. Returns 1 on success.
 fn AWS::Dynamo::put ($table, $item, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "put", AWS::_shq($table), "--item", AWS::_shq(to_json $item)
-    AWS::_run_json(\@argv)
+    AWS::ddb_put_item($table, $item, %opts)
 }
 
+## Delete one item by key. Deferred in v0.2.0 — needs `aws__ddb_delete_item`.
 fn AWS::Dynamo::delete ($table, $key, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "delete", AWS::_shq($table), "--key", AWS::_shq(to_json $key)
-    AWS::_run_json(\@argv)
+    die "AWS::Dynamo::delete: deferred in v0.2.0 cdylib — add aws__ddb_delete_item to the export list"
 }
 
-## Run a Query.
-## Required:
-##   expr => "id = :id"
-##   vals => { ":id" => 42 }
-## Optional:
-##   names => { "#k" => "real-name" }
-##   index => "gsi-name"
-##   filter => "attr_not_exists(deleted_at)"
-##   limit => N
-##   consistent => 1
+## Query / Scan / batch_write / scan_stream / describe — deferred in v0.2.0.
+## These need richer cdylib exports (filter/index/limit/pagination plumbing).
 fn AWS::Dynamo::query ($table, %opts) {
-    die "AWS::Dynamo::query: expr => '…' is required" unless defined $opts{expr}
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "query", AWS::_shq($table), "--expr", AWS::_shq($opts{expr})
-    push @argv, "--vals",  AWS::_shq(to_json $opts{vals})  if defined $opts{vals}
-    push @argv, "--names", AWS::_shq(to_json $opts{names}) if defined $opts{names}
-    push @argv, "--index", AWS::_shq($opts{index})         if defined $opts{index}
-    push @argv, "--filter", AWS::_shq($opts{filter})       if defined $opts{filter}
-    push @argv, "--limit", AWS::_shq($opts{limit})         if defined $opts{limit}
-    push @argv, "--consistent" if $opts{consistent}
-    AWS::_run_ndjson(\@argv)
+    die "AWS::Dynamo::query: deferred in v0.2.0 cdylib — add aws__ddb_query to the export list"
 }
 
-## Scan a table. Same opts as query minus expr.
 fn AWS::Dynamo::scan ($table, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "scan", AWS::_shq($table)
-    push @argv, "--filter", AWS::_shq($opts{filter})       if defined $opts{filter}
-    push @argv, "--vals",   AWS::_shq(to_json $opts{vals}) if defined $opts{vals}
-    push @argv, "--names",  AWS::_shq(to_json $opts{names}) if defined $opts{names}
-    push @argv, "--index",  AWS::_shq($opts{index})        if defined $opts{index}
-    push @argv, "--limit",  AWS::_shq($opts{limit})        if defined $opts{limit}
-    push @argv, "--page-size", AWS::_shq($opts{page_size}) if defined $opts{page_size}
-    AWS::_run_ndjson(\@argv)
+    die "AWS::Dynamo::scan: deferred in v0.2.0 cdylib — add aws__ddb_scan to the export list"
 }
 
-## Bulk write. $rows is an arrayref of either items (hashrefs) or
-## `{ _delete => { ...key... } }` for deletes.
 fn AWS::Dynamo::batch_write ($table, $rows, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "batch-write", AWS::_shq($table)
-    my $cmd = join " ", @argv
-    open my $fh, "|-", $cmd or die "AWS::Dynamo::batch_write: spawn failed: $!"
-    for my $row (@$rows) {
-        print $fh to_json($row) . "\n"
-    }
-    close $fh or die "AWS::Dynamo::batch_write: helper exited ($?)"
-    1
+    die "AWS::Dynamo::batch_write: deferred in v0.2.0 cdylib — add aws__ddb_batch_write to the export list"
 }
 
-## Streaming scan — callback fires once per item without buffering.
 fn AWS::Dynamo::scan_stream ($table, %opts) {
-    die "AWS::Dynamo::scan_stream: callback => sub { … } is required" unless defined $opts{callback}
-    my $cb = $opts{callback}
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "scan", AWS::_shq($table)
-    push @argv, "--filter", AWS::_shq($opts{filter})       if defined $opts{filter}
-    push @argv, "--vals",   AWS::_shq(to_json $opts{vals}) if defined $opts{vals}
-    push @argv, "--names",  AWS::_shq(to_json $opts{names}) if defined $opts{names}
-    push @argv, "--index",  AWS::_shq($opts{index})        if defined $opts{index}
-    push @argv, "--limit",  AWS::_shq($opts{limit})        if defined $opts{limit}
-    my $cmd = join " ", @argv
-    my $n = 0
-    open my $fh, "-|", $cmd or die "AWS::Dynamo::scan_stream: spawn failed: $!"
-    while (my $line = <$fh>) {
-        chomp $line
-        next if $line eq ""
-        $cb->(from_json $line)
-        $n++
-    }
-    close $fh or die "AWS::Dynamo::scan_stream: helper exited ($?)"
-    $n
+    die "AWS::Dynamo::scan_stream: streaming + scan both deferred in v0.2.0 cdylib"
+}
+
+fn AWS::Dynamo::describe ($table, %opts) {
+    die "AWS::Dynamo::describe: deferred in v0.2.0 cdylib — add aws__ddb_describe_table to the export list"
 }
 
 ## Returns a list of table names.
 fn AWS::Dynamo::tables (%opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "tables"
-    map { $_->{name} } AWS::_run_ndjson(\@argv)
-}
-
-fn AWS::Dynamo::describe ($table, %opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "ddb", "describe", AWS::_shq($table)
-    AWS::_run_json(\@argv)
+    AWS::ddb_list_tables(%opts)
 }
 
 1

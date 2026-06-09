@@ -1,4 +1,6 @@
 ## lib/STS.stk — `use AWS::STS`
+##
+## Wraps `AWS::sts_caller_identity` from the v0.2.0 cdylib.
 
 package AWS::STS
 
@@ -6,20 +8,12 @@ use AWS
 
 ## Returns { account, arn, user_id }.
 fn AWS::STS::caller_identity (%opts) {
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "sts", "caller-identity"
-    AWS::_run_json(\@argv)
+    AWS::sts_caller_identity(%opts)
 }
 
-## Returns { access_key_id, secret_access_key, session_token, expiration,
-##           assumed_role_arn }.
+## Assume an IAM role. Deferred in v0.2.0 — needs `aws__sts_assume_role`.
 fn AWS::STS::assume_role ($role_arn, %opts) {
-    die "AWS::STS::assume_role: session => '…' is required" unless defined $opts{session}
-    my @argv = AWS::_conn_argv(\%opts)
-    push @argv, "sts", "assume-role", AWS::_shq($role_arn), "--session", AWS::_shq($opts{session})
-    push @argv, "--duration", AWS::_shq($opts{duration}) if defined $opts{duration}
-    push @argv, "--external-id", AWS::_shq($opts{external_id}) if defined $opts{external_id}
-    AWS::_run_json(\@argv)
+    die "AWS::STS::assume_role: deferred in v0.2.0 cdylib — add aws__sts_assume_role to the export list"
 }
 
 1
