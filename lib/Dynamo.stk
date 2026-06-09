@@ -29,18 +29,22 @@ fn AWS::Dynamo::query ($table, %opts) {
     die "AWS::Dynamo::query: deferred in v0.2.0 cdylib — add aws__ddb_query to the export list"
 }
 
+## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
 fn AWS::Dynamo::scan ($table, %opts) {
     die "AWS::Dynamo::scan: deferred in v0.2.0 cdylib — add aws__ddb_scan to the export list"
 }
 
+## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
 fn AWS::Dynamo::batch_write ($table, $rows, %opts) {
     die "AWS::Dynamo::batch_write: deferred in v0.2.0 cdylib — add aws__ddb_batch_write to the export list"
 }
 
+## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
 fn AWS::Dynamo::scan_stream ($table, %opts) {
     die "AWS::Dynamo::scan_stream: streaming + scan both deferred in v0.2.0 cdylib"
 }
 
+## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
 fn AWS::Dynamo::describe ($table, %opts) {
     die "AWS::Dynamo::describe: deferred in v0.2.0 cdylib — add aws__ddb_describe_table to the export list"
 }
