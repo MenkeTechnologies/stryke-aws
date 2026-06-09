@@ -530,3 +530,89 @@ pub extern "C" fn aws__lambda_invoke(args: *const c_char) -> *const c_char {
 pub extern "C" fn aws__lambda_list_functions(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_lambda_list_functions)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use aws_sdk_dynamodb::types::AttributeValue;
+    use std::collections::HashMap;
+
+    #[test]
+    fn av_string_roundtrips_as_json_string() {
+        let av = AttributeValue::S("hello".into());
+        assert_eq!(attribute_value_to_json(&av), json!("hello"));
+    }
+
+    #[test]
+    fn av_number_int_decodes_to_i64() {
+        let av = AttributeValue::N("42".into());
+        assert_eq!(attribute_value_to_json(&av), json!(42_i64));
+    }
+
+    #[test]
+    fn av_number_float_decodes_to_f64() {
+        let av = AttributeValue::N("3.14".into());
+        // f64 NaN-safe equality via serde Value.
+        assert_eq!(attribute_value_to_json(&av), json!(3.14_f64));
+    }
+
+    #[test]
+    fn av_number_non_numeric_falls_back_to_string() {
+        // DynamoDB N type accepts numeric strings; if a caller wrote a
+        // non-numeric there, surface it as a string rather than panicking.
+        let av = AttributeValue::N("not-a-number".into());
+        assert_eq!(attribute_value_to_json(&av), json!("not-a-number"));
+    }
+
+    #[test]
+    fn av_bool_and_null() {
+        assert_eq!(
+            attribute_value_to_json(&AttributeValue::Bool(true)),
+            json!(true)
+        );
+        assert_eq!(
+            attribute_value_to_json(&AttributeValue::Bool(false)),
+            json!(false)
+        );
+        assert_eq!(
+            attribute_value_to_json(&AttributeValue::Null(true)),
+            Value::Null
+        );
+    }
+
+    #[test]
+    fn av_string_set_renders_as_json_array() {
+        let av = AttributeValue::Ss(vec!["a".into(), "b".into()]);
+        assert_eq!(attribute_value_to_json(&av), json!(["a", "b"]));
+    }
+
+    #[test]
+    fn av_list_recurses_per_element() {
+        let av = AttributeValue::L(vec![
+            AttributeValue::S("x".into()),
+            AttributeValue::N("7".into()),
+            AttributeValue::Bool(true),
+        ]);
+        assert_eq!(attribute_value_to_json(&av), json!(["x", 7, true]));
+    }
+
+    #[test]
+    fn av_map_preserves_keys_and_recurses_values() {
+        let mut m = HashMap::new();
+        m.insert("name".to_string(), AttributeValue::S("ada".into()));
+        m.insert("age".to_string(), AttributeValue::N("36".into()));
+        let av = AttributeValue::M(m);
+        let v = attribute_value_to_json(&av);
+        assert_eq!(v["name"], json!("ada"));
+        assert_eq!(v["age"], json!(36_i64));
+    }
+
+    #[test]
+    fn av_nested_map_in_list_round_trips() {
+        let mut inner = HashMap::new();
+        inner.insert("k".to_string(), AttributeValue::S("v".into()));
+        let av = AttributeValue::L(vec![AttributeValue::M(inner)]);
+        let v = attribute_value_to_json(&av);
+        assert_eq!(v[0]["k"], json!("v"));
+    }
+}

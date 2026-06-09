@@ -1,159 +1,83 @@
-# t/test_aws.stk — connectivity tests against a live AWS account.
-#
-# Requires the cdylib to be loaded. Install once with `s pkg install -g .`
-# from the package root so stryke's FFI bridge dlopens
-# lib/libstryke_aws.{dylib,so} on `use AWS`.
-#
-# Set $STRYKE_AWS_TEST_BUCKET / $STRYKE_AWS_TEST_TABLE / $STRYKE_AWS_TEST_QUEUE
-# to opt into the per-service round-trips that need a writable resource.
+## t/test_aws.stk — assertion tests for the stryke `AWS` package.
+##
+## Uses stryke's native test framework (`assert_*` + `test_run`).
+## Requires the cdylib to be loaded — install once with `s pkg install -g .`
+## so stryke's FFI bridge dlopens `lib/libstryke_aws.{dylib,so}` on `use AWS`.
+##
+## Service-dependent assertions only fire when:
+##   * AWS credentials reachable (STS::caller_identity succeeds), AND
+##   * the relevant $STRYKE_AWS_TEST_BUCKET / _TABLE / _QUEUE env var is set.
+## The permission-free assertions (version + cdylib loaded) always run, so
+## CI without AWS access still exercises the FFI surface.
 
 use AWS
 
-val $have_cdylib = eval { AWS::version(); 1 }
-unless ($have_cdylib) {
-    p "1..0 # SKIP cdylib not loaded — run `s pkg install -g .` first"
-    exit 0
-}
+# ── permission-free: cdylib reachable ───────────────────────────────
+val $version = AWS::version()
+assert_ok $version, "AWS::version returns truthy (cdylib loaded)"
 
-val $have_helper = eval { AWS::helper_path(); 1 }
-unless ($have_helper) {
-    p "1..0 # SKIP helper not built — run `cargo build --release` first"
-    exit 0
-}
+# ── credentials probe ───────────────────────────────────────────────
+val $id = eval { AWS::STS::caller_identity() }
+val $have_creds = !$@ && defined $id && defined $id->{account}
 
-val $have_creds = eval { AWS::STS::caller_identity(); 1 }
-unless ($have_creds) {
-    p "1..0 # SKIP no AWS credentials reachable (STS get-caller-identity failed)"
-    exit 0
-}
+if ($have_creds) {
+    assert_ok defined $id->{account}, "caller_identity returns account"
+    assert_ok defined $id->{arn}, "caller_identity returns arn"
+    assert_ok AWS::ping(), "ping returns truthy when creds present"
 
-val $bucket = $ENV{STRYKE_AWS_TEST_BUCKET}
-val $table  = $ENV{STRYKE_AWS_TEST_TABLE}
-val $queue  = $ENV{STRYKE_AWS_TEST_QUEUE}
+    # ── S3 round-trip (only with $STRYKE_AWS_TEST_BUCKET) ───────
+    val $bucket = $ENV{STRYKE_AWS_TEST_BUCKET}
+    if (defined $bucket) {
+        val $key = "stryke-aws-test/$$/" . time() . ".txt"
+        val $uri = "s3://$bucket/$key"
+        val $body = "hello-from-stryke-aws-$$"
 
-var $plan = 2
-$plan += 5 if defined $bucket
-$plan += 4 if defined $table
-$plan += 3 if defined $queue
-p "1..$plan"
-var $i = 0
+        val $put = AWS::S3::put($uri, data => $body)
+        assert_eq $put->{key}, $key, "s3 put returns the key we wrote"
+        assert_eq AWS::S3::get($uri), $body, "s3 get round-trip"
+        assert_eq AWS::S3::head($uri)->{size}, len($body), "s3 head size"
+        val @ls = AWS::S3::ls("s3://$bucket/stryke-aws-test/$$/")
+        assert_ge scalar(@ls), 1, "s3 ls finds at least our object"
+        AWS::S3::rm($uri)
+        assert_ok 1, "s3 rm completed without dying"
+    }
 
-# 1. caller identity
-var $id
-eval { $id = AWS::STS::caller_identity() }
-$i++
-p $@ ? "not ok $i - caller_identity: $@" :
-       (defined $id->{account} && defined $id->{arn}
-            ? "ok $i - caller_identity (account=$id->{account})"
-            : "not ok $i - caller_identity missing fields")
+    # ── Dynamo round-trip (only with $STRYKE_AWS_TEST_TABLE) ────
+    val $table = $ENV{STRYKE_AWS_TEST_TABLE}
+    if (defined $table) {
+        val $pk = "stryke-aws-test-$$"
+        val $put = AWS::Dynamo::put($table, { id => $pk, val => "alice", n => 42 })
+        assert_ok $put->{ok}, "ddb put returns ok"
+        val $got = AWS::Dynamo::get($table, { id => $pk })
+        assert_eq $got->{val}, "alice", "ddb get round-trip val"
+        assert_eq $got->{n}, 42, "ddb get round-trip n"
+        val @q = AWS::Dynamo::query($table, expr => "id = :id", vals => { ":id" => $pk })
+        assert_eq scalar(@q), 1, "ddb query returns 1 row"
+        assert_eq $q[0]->{val}, "alice", "ddb query row val"
+        AWS::Dynamo::delete($table, { id => $pk })
+        assert_ok 1, "ddb delete completed without dying"
+    }
 
-# 2. plumbing ping
-$i++
-p (AWS::ping() ? "ok $i - ping (creds present)" : "not ok $i - ping returned false")
-
-# ---- S3 round-trip (only if $STRYKE_AWS_TEST_BUCKET set) ----
-if (defined $bucket) {
-    val $key = "stryke-aws-test/$$/" . time() . ".txt"
-    val $uri = "s3://$bucket/$key"
-    var $body = "hello-from-stryke-aws-$$"
-
-    var $r
-    eval { $r = AWS::S3::put($uri, data => $body) }
-    $i++
-    p $@ ? "not ok $i - s3 put: $@" :
-           ($r->{key} eq $key ? "ok $i - s3 put" : "not ok $i - s3 put bad shape")
-
-    var $got
-    eval { $got = AWS::S3::get($uri) }
-    $i++
-    p $@ ? "not ok $i - s3 get: $@" :
-           ($got eq $body ? "ok $i - s3 get round-trip" :
-            "not ok $i - s3 get returned " . len($got) . " bytes, want " . len($body))
-
-    var $head
-    eval { $head = AWS::S3::head($uri) }
-    $i++
-    p $@ ? "not ok $i - s3 head: $@" :
-           ($head->{size} == len($body) ? "ok $i - s3 head" : "not ok $i - s3 head wrong size")
-
-    var @ls
-    eval { @ls = AWS::S3::ls("s3://$bucket/stryke-aws-test/$$/") }
-    $i++
-    p $@ ? "not ok $i - s3 ls: $@" :
-           (len(@ls) >= 1 ? "ok $i - s3 ls (#{len(@ls)} entries)" :
-            "not ok $i - s3 ls empty")
-
-    eval { AWS::S3::rm($uri) }
-    $i++
-    p $@ ? "not ok $i - s3 rm: $@" : "ok $i - s3 rm"
-}
-
-# ---- Dynamo round-trip (only if $STRYKE_AWS_TEST_TABLE set) ----
-if (defined $table) {
-    val $pk = "stryke-aws-test-$$"
-
-    var $r
-    eval { $r = AWS::Dynamo::put($table, { id => $pk, val => "alice", n => 42 }) }
-    $i++
-    p $@ ? "not ok $i - ddb put: $@" :
-           ($r->{ok} ? "ok $i - ddb put" : "not ok $i - ddb put wrong shape")
-
-    var $got
-    eval { $got = AWS::Dynamo::get($table, { id => $pk }) }
-    $i++
-    p $@ ? "not ok $i - ddb get: $@" :
-           (defined $got && $got->{val} eq "alice" && $got->{n} == 42
-                ? "ok $i - ddb get round-trip"
-                : "not ok $i - ddb get wrong shape")
-
-    var @q
-    eval { @q = AWS::Dynamo::query($table, expr => "id = :id", vals => { ":id" => $pk }) }
-    $i++
-    p $@ ? "not ok $i - ddb query: $@" :
-           (len(@q) == 1 && $q[0]->{val} eq "alice"
-                ? "ok $i - ddb query"
-                : "not ok $i - ddb query wrong shape")
-
-    eval { AWS::Dynamo::delete($table, { id => $pk }) }
-    $i++
-    p $@ ? "not ok $i - ddb delete: $@" : "ok $i - ddb delete"
-}
-
-# ---- SQS round-trip (only if $STRYKE_AWS_TEST_QUEUE set) ----
-if (defined $queue) {
-    val $body = "msg-from-stryke-aws-$$-" . time()
-
-    var $sent
-    eval { $sent = AWS::SQS::send($queue, $body) }
-    $i++
-    p $@ ? "not ok $i - sqs send: $@" :
-           (defined $sent->{message_id} ? "ok $i - sqs send" :
-            "not ok $i - sqs send wrong shape")
-
-    var @msgs
-    eval { @msgs = AWS::SQS::receive($queue, max => 1, wait => 5) }
-    $i++
-    if ($@) {
-        p "not ok $i - sqs receive: $@"
-    } else {
-        var $found = 0
-        var $rh
+    # ── SQS round-trip (only with $STRYKE_AWS_TEST_QUEUE) ───────
+    val $queue = $ENV{STRYKE_AWS_TEST_QUEUE}
+    if (defined $queue) {
+        val $body = "msg-from-stryke-aws-$$-" . time()
+        val $sent = AWS::SQS::send($queue, $body)
+        assert_ok defined $sent->{message_id}, "sqs send returns message_id"
+        val @msgs = AWS::SQS::receive($queue, max => 1, wait => 5)
+        var $found_rh
         for val $m (@msgs) {
             if ($m->{body} eq $body) {
-                $found = 1
-                $rh = $m->{receipt_handle}
+                $found_rh = $m->{receipt_handle}
                 last
             }
         }
-        p ($found ? "ok $i - sqs receive (found our body)"
-                  : "not ok $i - sqs receive missing our body")
-        # 3rd test: delete the message we just received
-        $i++
-        if (defined $rh) {
-            eval { AWS::SQS::delete($queue, $rh) }
-            p $@ ? "not ok $i - sqs delete: $@" : "ok $i - sqs delete"
-        } else {
-            p "not ok $i - sqs delete skipped (no receipt)"
+        assert_ok defined $found_rh, "sqs receive finds our body"
+        if (defined $found_rh) {
+            AWS::SQS::delete($queue, $found_rh)
+            assert_ok 1, "sqs delete completed without dying"
         }
     }
 }
+
+test_run
