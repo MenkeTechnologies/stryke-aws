@@ -1,15 +1,33 @@
 [package]
 name = "aws"
-version = "0.1.0"
-description = "AWS client (S3, DynamoDB, SQS, Lambda, STS) for stryke. Opt-in package tier; keeps the stryke core binary slim."
+version = "0.2.0"
+description = "AWS client (S3, DynamoDB, SQS, Lambda, STS) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region. v0.2.0 focused subset; remaining ops can be added incrementally."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-aws"
 edition = "2026"
 
-[bin]
-aws = "bin/aws.stk"
-aws-build = "bin/aws-build.stk"
+[ffi]
+lib-name = "stryke_aws"
+namespace = "AWS"
+exports = [
+    "aws__pkg_version",
+    "aws__sts_caller_identity",
+    "aws__s3_list_buckets",
+    "aws__s3_list_objects",
+    "aws__s3_get_object",
+    "aws__s3_put_object",
+    "aws__s3_delete_object",
+    "aws__ddb_list_tables",
+    "aws__ddb_put_item",
+    "aws__ddb_get_item",
+    "aws__sqs_list_queues",
+    "aws__sqs_send_message",
+    "aws__sqs_receive_message",
+    "aws__sqs_delete_message",
+    "aws__lambda_invoke",
+    "aws__lambda_list_functions",
+]
 
 [scripts]
 build = "cargo build --release"

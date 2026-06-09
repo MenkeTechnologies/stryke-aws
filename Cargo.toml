@@ -1,17 +1,18 @@
 [package]
-name = "stryke-aws-helper"
-version = "0.1.1"
+name = "stryke-aws"
+version = "0.2.0"
 edition = "2021"
-description = "AWS bridge binary for the stryke `aws` package"
+description = "AWS cdylib for stryke. Dlopened in-process with a persistent tokio runtime + per-(region, service) AWS SDK client cache. v0.2.0 covers S3, DynamoDB, SQS, Lambda, STS — focused subset of the v1 helper's surface; remaining ops can be added incrementally."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-aws"
 homepage = "https://menketechnologies.github.io/stryke-aws/"
 publish = false
 
-[[bin]]
-name = "stryke-aws-helper"
-path = "src/main.rs"
+[lib]
+name = "stryke_aws"
+crate-type = ["cdylib"]
+path = "src/lib.rs"
 
 [dependencies]
 aws-config = { version = "1", features = ["behavior-version-latest"] }
@@ -23,16 +24,12 @@ aws-sdk-sts = "1"
 aws-types = "1"
 aws-smithy-types = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "fs"] }
-clap = { version = "4", default-features = false, features = [
-    "std", "derive", "help", "usage", "error-context", "env",
-] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 anyhow = "1"
 base64 = "0.22"
-url = "2"
-http = "1"
-indexmap = { version = "2", features = ["serde"] }
+once_cell = "1"
+parking_lot = "0.12"
 
 [profile.release]
 opt-level = 3

@@ -56,10 +56,18 @@ vars, `~/.aws/config|credentials`, IMDS) — same as the `aws` CLI.
 
 ## [0x01] Install
 
+From a release (no rustc on the consumer machine):
+
+```sh
+s pkg install -g github.com/MenkeTechnologies/stryke-aws
+```
+
+From a local checkout:
+
 ```sh
 cd ~/projects/stryke-aws
-cargo build --release            # produces target/release/stryke-aws-helper
-s pkg install -g .               # installs `aws` and `aws-build` CLIs
+cargo build --release            # produces target/release/libstryke_aws.{dylib,so}
+s pkg install -g .               # cdylib lands in ~/.stryke/store/aws@<version>/
 ```
 
 Or:
@@ -67,6 +75,12 @@ Or:
 ```sh
 make install
 ```
+
+The cdylib is dlopened in-process on first `use AWS`. A shared tokio
+runtime + `aws_config::SdkConfig` cache per region is held in `OnceCell`
+— no fork-per-call, no full IMDS/SSO/env creds chain on each call. v0.2.0
+covers a focused subset across S3, DynamoDB, SQS, Lambda, STS; the v1
+helper's broader op set can be added incrementally.
 
 ## [0x02] Quick start
 

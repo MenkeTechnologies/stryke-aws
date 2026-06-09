@@ -1,18 +1,19 @@
 # t/test_aws.stk — connectivity tests against a live AWS account.
 #
-# Most tests just exercise *plumbing* (argv build, JSON parse) — they hit
-# AWS minimally so the suite stays cheap. Skips cleanly when:
-#   * the helper isn't built
-#   * no AWS credentials are reachable
+# Requires the cdylib to be loaded. Install once with `s pkg install -g .`
+# from the package root so stryke's FFI bridge dlopens
+# lib/libstryke_aws.{dylib,so} on `use AWS`.
 #
 # Set $STRYKE_AWS_TEST_BUCKET / $STRYKE_AWS_TEST_TABLE / $STRYKE_AWS_TEST_QUEUE
 # to opt into the per-service round-trips that need a writable resource.
 
-require "./lib/AWS.stk"
-require "./lib/S3.stk"
-require "./lib/Dynamo.stk"
-require "./lib/SQS.stk"
-require "./lib/STS.stk"
+use AWS
+
+my $have_cdylib = eval { AWS::version(); 1 }
+unless ($have_cdylib) {
+    p "1..0 # SKIP cdylib not loaded — run `s pkg install -g .` first"
+    exit 0
+}
 
 my $have_helper = eval { AWS::helper_path(); 1 }
 unless ($have_helper) {

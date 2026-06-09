@@ -6,10 +6,10 @@ all: release
 help:
 	@printf '%s\n' \
 	  'targets:' \
-	  '  make release   - cargo build --release  (default; produces target/release/stryke-aws-helper)' \
+	  '  make release   - cargo build --release  (default; produces target/release/libstryke_aws.{dylib,so})' \
 	  '  make debug     - cargo build' \
 	  '  make test      - cargo test then `s test t/`  (skips without AWS creds)' \
-	  '  make install   - `s pkg install -g .` (registers aws/aws-build CLI launchers)' \
+	  '  make install   - `s pkg install -g .` (cdylib lands in ~/.stryke/store/aws@<ver>/)' \
 	  '  make clean     - cargo clean'
 
 release:
