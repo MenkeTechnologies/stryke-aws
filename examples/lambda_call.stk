@@ -4,8 +4,8 @@
 
 use AWS::Lambda
 
-my $fn = $ARGV[0]
+val $fn = $ARGV[0]
 die "usage: lambda_call.stk FUNCTION_NAME\n" unless defined $fn
 
-my $payload = AWS::Lambda::call $fn, { hello => "world", n => 42 }
+val $payload = AWS::Lambda::call $fn, { hello => "world", n => 42 }
 p "function returned: " . to_json($payload)

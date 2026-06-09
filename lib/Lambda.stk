@@ -20,7 +20,7 @@ fn AWS::Lambda::invoke ($name, $payload, %opts) {
 ## Convenience: sync invoke, return just the payload (or undef if the
 ## function returned a non-success status code).
 fn AWS::Lambda::call ($name, $payload, %opts) {
-    my $r = AWS::Lambda::invoke($name, $payload, %opts)
+    val $r = AWS::Lambda::invoke($name, $payload, %opts)
     return undef unless defined $r && ($r->{status_code} // 0) == 200
     $r->{result}
 }

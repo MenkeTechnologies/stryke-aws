@@ -9,7 +9,7 @@
 
 use AWS::Dynamo
 
-my $table = $ARGV[0] // "stryke-aws-demo"
+val $table = $ARGV[0] // "stryke-aws-demo"
 
 AWS::Dynamo::put $table, {
     id    => "demo-1",
@@ -19,10 +19,10 @@ AWS::Dynamo::put $table, {
     meta  => { color => "blue", n => 7 },
 }
 
-my $row = AWS::Dynamo::get $table, { id => "demo-1" }
+val $row = AWS::Dynamo::get $table, { id => "demo-1" }
 p "got: " . to_json($row)
 
-my @hits = AWS::Dynamo::query $table,
+val @hits = AWS::Dynamo::query $table,
     expr => "id = :id",
     vals => { ":id" => "demo-1" }
 p "query rows: " . len(@hits)

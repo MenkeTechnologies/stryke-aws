@@ -19,7 +19,7 @@ package AWS
 
 ## Decode the cdylib's JSON return; die on `{error}` payload.
 fn AWS::_decode ($name, $json) {
-    my $o = from_json $json
+    val $o = from_json $json
     if (ref $o eq "HASH" && exists $o->{error}) {
         die "AWS::$name: $o->{error}"
     }
@@ -28,7 +28,7 @@ fn AWS::_decode ($name, $json) {
 
 ## Build the FFI request hash by merging the caller's connection opts.
 fn AWS::_req ($extra, $opts) {
-    my %r = %$extra
+    var %r = %$extra
     $r{region} = $opts->{region} if exists $opts->{region} && defined $opts->{region}
     \%r
 }
@@ -55,33 +55,33 @@ fn AWS::sts_caller_identity (%opts) {
 
 ## List S3 bucket names visible to the caller.
 fn AWS::s3_list_buckets (%opts) {
-    my $o = AWS::_decode("s3_list_buckets",
+    val $o = AWS::_decode("s3_list_buckets",
         aws__s3_list_buckets(to_json(AWS::_req({}, \%opts))))
     @{ $o->{buckets} }
 }
 
 ## List S3 objects under $bucket with `prefix => "..."`.
 fn AWS::s3_list_objects ($bucket, %opts) {
-    my $r = AWS::_req({ bucket => $bucket, prefix => $opts{prefix} }, \%opts)
-    my $o = AWS::_decode("s3_list_objects", aws__s3_list_objects(to_json($r)))
+    val $r = AWS::_req({ bucket => $bucket, prefix => $opts{prefix} }, \%opts)
+    val $o = AWS::_decode("s3_list_objects", aws__s3_list_objects(to_json($r)))
     @{ $o->{objects} }
 }
 
 ## Download object body as a scalar (string or `base64:...` for binary).
 fn AWS::s3_get_object ($bucket, $key, %opts) {
-    my $r = AWS::_req({ bucket => $bucket, key => $key }, \%opts)
+    val $r = AWS::_req({ bucket => $bucket, key => $key }, \%opts)
     AWS::_decode("s3_get_object", aws__s3_get_object(to_json($r)))->{body}
 }
 
 ## Upload $body to s3://$bucket/$key. Returns { bucket, key, etag }.
 fn AWS::s3_put_object ($bucket, $key, $body, %opts) {
-    my $r = AWS::_req({ bucket => $bucket, key => $key, body => $body }, \%opts)
+    val $r = AWS::_req({ bucket => $bucket, key => $key, body => $body }, \%opts)
     AWS::_decode("s3_put_object", aws__s3_put_object(to_json($r)))
 }
 
 ## Delete s3://$bucket/$key. Returns 1 on success.
 fn AWS::s3_delete_object ($bucket, $key, %opts) {
-    my $r = AWS::_req({ bucket => $bucket, key => $key }, \%opts)
+    val $r = AWS::_req({ bucket => $bucket, key => $key }, \%opts)
     AWS::_decode("s3_delete_object", aws__s3_delete_object(to_json($r)))->{deleted} ? 1 : 0
 }
 
@@ -89,7 +89,7 @@ fn AWS::s3_delete_object ($bucket, $key, %opts) {
 
 ## List DynamoDB table names.
 fn AWS::ddb_list_tables (%opts) {
-    my $o = AWS::_decode("ddb_list_tables",
+    val $o = AWS::_decode("ddb_list_tables",
         aws__ddb_list_tables(to_json(AWS::_req({}, \%opts))))
     @{ $o->{tables} }
 }
@@ -97,14 +97,14 @@ fn AWS::ddb_list_tables (%opts) {
 ## PutItem on $table with $item hashref. Returns 1 on success.
 fn AWS::ddb_put_item ($table, $item, %opts) {
     die "AWS::ddb_put_item: item must be hashref" unless ref($item) eq "HASH"
-    my $r = AWS::_req({ table => $table, item => $item }, \%opts)
+    val $r = AWS::_req({ table => $table, item => $item }, \%opts)
     AWS::_decode("ddb_put_item", aws__ddb_put_item(to_json($r)))->{put} ? 1 : 0
 }
 
 ## GetItem from $table by $key hashref. Returns the item or undef.
 fn AWS::ddb_get_item ($table, $key, %opts) {
     die "AWS::ddb_get_item: key must be hashref" unless ref($key) eq "HASH"
-    my $r = AWS::_req({ table => $table, key => $key }, \%opts)
+    val $r = AWS::_req({ table => $table, key => $key }, \%opts)
     AWS::_decode("ddb_get_item", aws__ddb_get_item(to_json($r)))->{item}
 }
 
@@ -112,27 +112,27 @@ fn AWS::ddb_get_item ($table, $key, %opts) {
 
 ## List SQS queue URLs.
 fn AWS::sqs_list_queues (%opts) {
-    my $o = AWS::_decode("sqs_list_queues",
+    val $o = AWS::_decode("sqs_list_queues",
         aws__sqs_list_queues(to_json(AWS::_req({}, \%opts))))
     @{ $o->{queues} }
 }
 
 ## SendMessage; returns the new message_id.
 fn AWS::sqs_send_message ($queue_url, $body, %opts) {
-    my $r = AWS::_req({ queue_url => $queue_url, body => $body }, \%opts)
+    val $r = AWS::_req({ queue_url => $queue_url, body => $body }, \%opts)
     AWS::_decode("sqs_send_message", aws__sqs_send_message(to_json($r)))->{message_id}
 }
 
 ## ReceiveMessage; returns array of message hashrefs.
 fn AWS::sqs_receive_message ($queue_url, %opts) {
-    my $r = AWS::_req({ queue_url => $queue_url, max => $opts{max} }, \%opts)
-    my $o = AWS::_decode("sqs_receive_message", aws__sqs_receive_message(to_json($r)))
+    val $r = AWS::_req({ queue_url => $queue_url, max => $opts{max} }, \%opts)
+    val $o = AWS::_decode("sqs_receive_message", aws__sqs_receive_message(to_json($r)))
     @{ $o->{messages} }
 }
 
 ## DeleteMessage by receipt handle. Returns 1 on success.
 fn AWS::sqs_delete_message ($queue_url, $receipt_handle, %opts) {
-    my $r = AWS::_req({ queue_url => $queue_url, receipt_handle => $receipt_handle }, \%opts)
+    val $r = AWS::_req({ queue_url => $queue_url, receipt_handle => $receipt_handle }, \%opts)
     AWS::_decode("sqs_delete_message", aws__sqs_delete_message(to_json($r)))->{deleted} ? 1 : 0
 }
 
@@ -140,13 +140,13 @@ fn AWS::sqs_delete_message ($queue_url, $receipt_handle, %opts) {
 
 ## Sync Invoke; returns { function, status_code, result }.
 fn AWS::lambda_invoke ($function, $payload, %opts) {
-    my $r = AWS::_req({ function => $function, payload => $payload }, \%opts)
+    val $r = AWS::_req({ function => $function, payload => $payload }, \%opts)
     AWS::_decode("lambda_invoke", aws__lambda_invoke(to_json($r)))
 }
 
 ## List Lambda function names.
 fn AWS::lambda_list_functions (%opts) {
-    my $o = AWS::_decode("lambda_list_functions",
+    val $o = AWS::_decode("lambda_list_functions",
         aws__lambda_list_functions(to_json(AWS::_req({}, \%opts))))
     @{ $o->{functions} }
 }

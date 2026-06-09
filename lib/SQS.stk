@@ -51,13 +51,13 @@ fn AWS::SQS::list (%opts) {
 ## callback, deleting on success. Returns the count handled.
 fn AWS::SQS::pump ($queue, %opts) {
     die "AWS::SQS::pump: callback => sub { … } is required" unless defined $opts{callback}
-    my $cb = $opts{callback}
-    my $iters = $opts{iterations} // 1
-    my $n = 0
+    val $cb = $opts{callback}
+    val $iters = $opts{iterations} // 1
+    var $n = 0
     for (1 .. $iters) {
-        my @msgs = AWS::SQS::receive($queue, %opts)
+        val @msgs = AWS::SQS::receive($queue, %opts)
         last unless @msgs
-        for my $m (@msgs) {
+        for val $m (@msgs) {
             $cb->($m)
             AWS::SQS::delete($queue, $m->{receipt_handle}, %opts)
             $n++

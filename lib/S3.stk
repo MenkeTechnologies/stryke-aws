@@ -16,17 +16,17 @@ fn AWS::S3::_parse ($uri) {
 ## Returns an array of object hashrefs under the URI prefix.
 ## Each row: { key, size }.
 fn AWS::S3::ls ($uri, %opts) {
-    my ($bucket, $prefix) = AWS::S3::_parse($uri)
+    val ($bucket, $prefix) = AWS::S3::_parse($uri)
     AWS::s3_list_objects($bucket, prefix => $prefix, %opts)
 }
 
 ## Returns the object's body as a byte string. Pass `output => "/path"`
 ## to write to a file instead and get the path back.
 fn AWS::S3::get ($uri, %opts) {
-    my ($bucket, $key) = AWS::S3::_parse($uri)
-    my $body = AWS::s3_get_object($bucket, $key, %opts)
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    val $body = AWS::s3_get_object($bucket, $key, %opts)
     if (defined $opts{output}) {
-        open my $fh, ">", $opts{output} or die "AWS::S3::get: open $opts{output}: $!"
+        open val $fh, ">", $opts{output} or die "AWS::S3::get: open $opts{output}: $!"
         print $fh $body
         close $fh
         return $opts{output}
@@ -37,12 +37,12 @@ fn AWS::S3::get ($uri, %opts) {
 ## Upload a scalar string OR a local file. Pass `data => $bytes` or
 ## `input => "/local/path"`. Returns the put-object response hash.
 fn AWS::S3::put ($uri, %opts) {
-    my ($bucket, $key) = AWS::S3::_parse($uri)
-    my $body
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    var $body
     if (defined $opts{data}) {
         $body = $opts{data}
     } elsif (defined $opts{input}) {
-        open my $fh, "<", $opts{input} or die "AWS::S3::put: open $opts{input}: $!"
+        open val $fh, "<", $opts{input} or die "AWS::S3::put: open $opts{input}: $!"
         local $/
         $body = <$fh>
         close $fh
@@ -59,7 +59,7 @@ fn AWS::S3::head ($uri, %opts) {
 
 ## Delete an object.
 fn AWS::S3::rm ($uri, %opts) {
-    my ($bucket, $key) = AWS::S3::_parse($uri)
+    val ($bucket, $key) = AWS::S3::_parse($uri)
     AWS::s3_delete_object($bucket, $key, %opts) ? { deleted => 1 } : { deleted => 0 }
 }
 

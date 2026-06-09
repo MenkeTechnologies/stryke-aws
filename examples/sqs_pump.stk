@@ -4,10 +4,10 @@
 
 use AWS::SQS
 
-my $queue = $ARGV[0]
+val $queue = $ARGV[0]
 die "usage: sqs_pump.stk QUEUE_URL\n" unless defined $queue
 
-my $n = AWS::SQS::pump $queue,
+val $n = AWS::SQS::pump $queue,
     iterations => 5,
     max        => 10,
     wait       => 20,

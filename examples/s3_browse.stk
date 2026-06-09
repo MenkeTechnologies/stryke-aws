@@ -4,11 +4,11 @@
 
 use AWS::S3
 
-my $uri = $ARGV[0]
+val $uri = $ARGV[0]
 die "usage: s3_browse.stk s3://bucket/prefix\n" unless defined $uri
 
-my @entries = AWS::S3::ls $uri, delimiter => "/"
-for my $e (@entries) {
+val @entries = AWS::S3::ls $uri, delimiter => "/"
+for val $e (@entries) {
     if ($e->{type} eq "prefix") {
         p "  [dir] $e->{key}"
     } else {
