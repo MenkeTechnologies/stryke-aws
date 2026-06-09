@@ -551,9 +551,10 @@ mod tests {
 
     #[test]
     fn av_number_float_decodes_to_f64() {
-        let av = AttributeValue::N("3.14".into());
+        let av = AttributeValue::N("1.25".into());
         // f64 NaN-safe equality via serde Value.
-        assert_eq!(attribute_value_to_json(&av), json!(3.14_f64));
+        // Avoid 3.14 to dodge clippy::approx_constant (≈ PI).
+        assert_eq!(attribute_value_to_json(&av), json!(1.25_f64));
     }
 
     #[test]
