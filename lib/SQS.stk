@@ -66,4 +66,3 @@ fn AWS::SQS::pump ($queue, %opts) {
     $n
 }
 
-1

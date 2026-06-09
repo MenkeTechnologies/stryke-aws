@@ -54,4 +54,3 @@ fn AWS::Dynamo::tables (%opts) {
     AWS::ddb_list_tables(%opts)
 }
 
-1

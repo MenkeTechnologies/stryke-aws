@@ -30,4 +30,3 @@ fn AWS::Lambda::list (%opts) {
     AWS::lambda_list_functions(%opts)
 }
 
-1

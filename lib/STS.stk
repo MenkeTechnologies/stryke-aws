@@ -16,4 +16,3 @@ fn AWS::STS::assume_role ($role_arn, %opts) {
     die "AWS::STS::assume_role: deferred in v0.2.0 cdylib — add aws__sts_assume_role to the export list"
 }
 
-1

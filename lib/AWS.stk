@@ -151,4 +151,3 @@ fn AWS::lambda_list_functions (%opts) {
     @{ $o->{functions} }
 }
 
-1
