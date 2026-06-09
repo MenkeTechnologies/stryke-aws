@@ -2,7 +2,7 @@
 name = "stryke-aws"
 version = "0.2.0"
 edition = "2021"
-description = "AWS SDK cdylib for the stryke `aws` package — dlopened in-process via stryke's FFI bridge."
+description = "AWS SDK cdylib for the stryke `aws` package — dlopened in-process via stryke's FFI bridge"
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-aws"
