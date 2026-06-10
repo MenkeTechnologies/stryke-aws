@@ -1,0 +1,81 @@
+## t/test_stryke_aws_surface.stk — wrapper-completeness pin.
+##
+## Asserts every public `fn X::Y::name` declared in lib/*.stk is
+## reachable via `use` at runtime. Uses `exists &X::Y::name` to
+## probe the symbol table without invoking the sub.
+##
+## Catches:
+##   * a wrapper sub deleted from lib/ but still referenced elsewhere
+##   * a sub-package file dropped from the install layout
+##   * `use Foo::Bar` failing to chase into lib/Bar.stk
+##   * an installed-package entry whose namespace bridge is broken
+##
+## Permission-free — no service, no creds, no live daemon. Private
+## helpers (`_` prefix) are implementation detail and are NOT
+## asserted, so refactoring internals stays free.
+
+use AWS
+use AWS::Dynamo
+use AWS::Lambda
+use AWS::S3
+use AWS::SQS
+use AWS::STS
+
+# ── AWS.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::version, "AWS::version exists"
+assert_ok exists &AWS::ping, "AWS::ping exists"
+assert_ok exists &AWS::sts_caller_identity, "AWS::sts_caller_identity exists"
+assert_ok exists &AWS::s3_list_buckets, "AWS::s3_list_buckets exists"
+assert_ok exists &AWS::s3_list_objects, "AWS::s3_list_objects exists"
+assert_ok exists &AWS::s3_get_object, "AWS::s3_get_object exists"
+assert_ok exists &AWS::s3_put_object, "AWS::s3_put_object exists"
+assert_ok exists &AWS::s3_delete_object, "AWS::s3_delete_object exists"
+assert_ok exists &AWS::ddb_list_tables, "AWS::ddb_list_tables exists"
+assert_ok exists &AWS::ddb_put_item, "AWS::ddb_put_item exists"
+assert_ok exists &AWS::ddb_get_item, "AWS::ddb_get_item exists"
+assert_ok exists &AWS::sqs_list_queues, "AWS::sqs_list_queues exists"
+assert_ok exists &AWS::sqs_send_message, "AWS::sqs_send_message exists"
+assert_ok exists &AWS::sqs_receive_message, "AWS::sqs_receive_message exists"
+assert_ok exists &AWS::sqs_delete_message, "AWS::sqs_delete_message exists"
+assert_ok exists &AWS::lambda_invoke, "AWS::lambda_invoke exists"
+assert_ok exists &AWS::lambda_list_functions, "AWS::lambda_list_functions exists"
+
+# ── Dynamo.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::Dynamo::get, "AWS::Dynamo::get exists"
+assert_ok exists &AWS::Dynamo::put, "AWS::Dynamo::put exists"
+assert_ok exists &AWS::Dynamo::delete, "AWS::Dynamo::delete exists"
+assert_ok exists &AWS::Dynamo::query, "AWS::Dynamo::query exists"
+assert_ok exists &AWS::Dynamo::scan, "AWS::Dynamo::scan exists"
+assert_ok exists &AWS::Dynamo::batch_write, "AWS::Dynamo::batch_write exists"
+assert_ok exists &AWS::Dynamo::scan_stream, "AWS::Dynamo::scan_stream exists"
+assert_ok exists &AWS::Dynamo::describe, "AWS::Dynamo::describe exists"
+assert_ok exists &AWS::Dynamo::tables, "AWS::Dynamo::tables exists"
+
+# ── Lambda.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::Lambda::invoke, "AWS::Lambda::invoke exists"
+assert_ok exists &AWS::Lambda::call, "AWS::Lambda::call exists"
+assert_ok exists &AWS::Lambda::list, "AWS::Lambda::list exists"
+
+# ── S3.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::S3::ls, "AWS::S3::ls exists"
+assert_ok exists &AWS::S3::get, "AWS::S3::get exists"
+assert_ok exists &AWS::S3::put, "AWS::S3::put exists"
+assert_ok exists &AWS::S3::head, "AWS::S3::head exists"
+assert_ok exists &AWS::S3::rm, "AWS::S3::rm exists"
+assert_ok exists &AWS::S3::presign, "AWS::S3::presign exists"
+assert_ok exists &AWS::S3::buckets, "AWS::S3::buckets exists"
+
+# ── SQS.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::SQS::send, "AWS::SQS::send exists"
+assert_ok exists &AWS::SQS::receive, "AWS::SQS::receive exists"
+assert_ok exists &AWS::SQS::delete, "AWS::SQS::delete exists"
+assert_ok exists &AWS::SQS::purge, "AWS::SQS::purge exists"
+assert_ok exists &AWS::SQS::attrs, "AWS::SQS::attrs exists"
+assert_ok exists &AWS::SQS::list, "AWS::SQS::list exists"
+assert_ok exists &AWS::SQS::pump, "AWS::SQS::pump exists"
+
+# ── STS.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::STS::caller_identity, "AWS::STS::caller_identity exists"
+assert_ok exists &AWS::STS::assume_role, "AWS::STS::assume_role exists"
+
+test_run
