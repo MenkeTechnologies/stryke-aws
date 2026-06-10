@@ -680,6 +680,73 @@ mod tests {
         assert_eq!(attribute_value_to_json(&empty_m), json!({}));
         assert!(attribute_value_to_json(&empty_m).is_object());
     }
+
+    // Scientific-notation regression catcher. The i64 lane uses
+    // `str::parse::<i64>`, which rejects "1e10" (digit-only required).
+    // The f64 lane accepts it and produces 10000000000.0 — a value that
+    // FITS in i64 exactly but is materialized as a float. A future
+    // refactor that "helpfully" detects integer-shaped floats and
+    // promotes them to i64 would change this output. That change is a
+    // behavioral break for any caller relying on JSON number `.is_f64()`
+    // to mean "the source string had a decimal point or exponent". Pin
+    // the current lane discrimination explicitly.
+    #[test]
+    fn av_number_scientific_notation_integer_stays_in_f64_lane() {
+        let av = AttributeValue::N("1e10".into());
+        let v = attribute_value_to_json(&av);
+        assert_eq!(v, json!(10_000_000_000.0_f64));
+        // The strong invariant: it must NOT be reported as i64, even
+        // though the value fits exactly. This is what distinguishes the
+        // current "string-shape" routing from a hypothetical
+        // "value-shape" routing.
+        assert!(v.is_f64(), "1e10 must stay in f64 lane, got {v:?}");
+        assert_eq!(v.as_i64(), None, "1e10 must not be reachable via as_i64");
+    }
+
+    // Number-overflow regression catcher. Values above i64::MAX (or
+    // below i64::MIN) cannot use the i64 lane and silently degrade to
+    // f64 with precision loss. Pin that the degradation is to f64 (NOT
+    // to the String fallback) so a future refactor that adds a u64 lane
+    // — or that diverts overflow to the String catch-all — is caught.
+    // The specific value chosen (i64::MAX + 1 = 2^63) is the smallest
+    // u64 that exceeds i64::MAX; it is exactly representable in f64
+    // (well within the 53-bit mantissa with all-zero low bits), so
+    // f64 → as_f64 must equal 9.223372036854776e18. The +1 vs i64::MAX
+    // is invisible in f64 — that is the precision loss being pinned.
+    #[test]
+    fn av_number_above_i64_max_degrades_to_f64_not_string() {
+        // i64::MAX = 9223372036854775807; +1 overflows.
+        let av = AttributeValue::N("9223372036854775808".into());
+        let v = attribute_value_to_json(&av);
+        // Must be a JSON number (not a String fallback).
+        assert!(
+            v.is_number(),
+            "i64-overflow value must remain numeric, got {v:?}"
+        );
+        // Specifically in the f64 lane (not i64).
+        assert!(v.is_f64(), "i64-overflow value must be f64, got {v:?}");
+        // The exact f64 value — 2^63 = 9.223372036854776e18.
+        assert_eq!(v.as_f64(), Some(9_223_372_036_854_775_808_f64));
+    }
+
+    // Empty-string N regression catcher. `AttributeValue::N("")`
+    // should not reach AWS (the DDB API rejects empty number strings),
+    // but a buggy caller could synthesize one. Both parse::<i64> and
+    // parse::<f64> reject empty input, so the chain must fall through
+    // to the Value::String fallback. Pin this — a refactor that
+    // panics on empty input here (e.g., switching to `unwrap`) would
+    // be UB across the FFI when the panic escapes catch_unwind on a
+    // synchronous code path.
+    #[test]
+    fn av_number_empty_string_falls_back_to_empty_json_string() {
+        let av = AttributeValue::N(String::new());
+        let v = attribute_value_to_json(&av);
+        assert_eq!(v, json!(""));
+        assert!(v.is_string());
+        // Importantly NOT a number (not 0, not null).
+        assert!(!v.is_number());
+        assert!(!v.is_null());
+    }
 }
 
 #[cfg(test)]
