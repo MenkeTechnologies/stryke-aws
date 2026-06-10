@@ -7,12 +7,12 @@ use AWS::SQS
 val $queue = $ARGV[0]
 die "usage: sqs_pump.stk QUEUE_URL\n" unless defined $queue
 
-val $n = AWS::SQS::pump $queue,
+val $n = AWS::SQS::pump($queue,
     iterations => 5,
     max        => 10,
     wait       => 20,
     callback   => sub ($m) {
         p "processing $m->{message_id}: " . substr($m->{body}, 0, 80)
         # ... do work ...
-    }
+    })
 p "processed $n messages"
