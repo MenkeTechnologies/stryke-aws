@@ -587,6 +587,18 @@ mod tests {
         assert_eq!(attribute_value_to_json(&av), json!(["a", "b"]));
     }
 
+    /// Number-set type — parallel to string-set above. NS ships as
+    /// number-STRINGS in the DDB API; we preserve that shape rather than
+    /// parsing through to numeric JSON because some apps round-trip values
+    /// like "01" / scientific notation through DDB and care about exact
+    /// serialization. Pin so a refactor that "helpfully" parses NS
+    /// entries to f64 gets caught.
+    #[test]
+    fn av_number_set_renders_as_json_array_of_strings() {
+        let av = AttributeValue::Ns(vec!["1".into(), "2.5".into(), "3e10".into()]);
+        assert_eq!(attribute_value_to_json(&av), json!(["1", "2.5", "3e10"]));
+    }
+
     #[test]
     fn av_list_recurses_per_element() {
         let av = AttributeValue::L(vec![
