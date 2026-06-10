@@ -1,0 +1,40 @@
+#!/usr/bin/env stryke
+# examples/whoami.stk — STS identity + visible S3 bucket summary.
+#
+# Read-only: who am I, what regions/credentials are reachable, what
+# S3 buckets are visible. Eval-guarded — missing creds exits cleanly.
+#
+# Run:   s examples/whoami.stk
+#        AWS_PROFILE=dev s examples/whoami.stk
+
+use AWS
+use AWS::STS
+use AWS::S3
+
+p "=== AWS whoami ==="
+
+val $id = eval { AWS::STS::caller_identity() }
+if ($@ || !defined $id || !defined $id->{account}) {
+    p "no usable AWS creds — set AWS_PROFILE or run in an instance role to exercise the demo"
+    exit 0
+}
+
+p "account: $id->{account}"
+p "arn:     $id->{arn}"
+p "user_id: " . ($id->{user_id} // "(none)")
+p ""
+
+val @buckets = eval { AWS::S3::buckets() }
+if (!$@) {
+    p "S3 buckets visible: " . scalar(@buckets)
+    val $shown = scalar(@buckets) < 5 ? scalar(@buckets) : 5
+    for (var $i = 0; $i < $shown; $i++) {
+        val $b = $buckets[$i]
+        # AWS::S3::buckets returns array of { name, creation_date } or strings.
+        val $name = ref($b) eq "HASH" ? ($b->{name} // "?") : $b
+        p "  - $name"
+    }
+    if (scalar(@buckets) > 5) {
+        p "  ... + " . (scalar(@buckets) - 5) . " more"
+    }
+}
