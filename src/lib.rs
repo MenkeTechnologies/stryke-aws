@@ -260,6 +260,8 @@ async fn op_ddb_get_item(opts: Value) -> Result<Value> {
 
 fn attribute_value_to_json(v: &aws_sdk_dynamodb::types::AttributeValue) -> Value {
     use aws_sdk_dynamodb::types::AttributeValue;
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD;
     match v {
         AttributeValue::S(s) => Value::String(s.clone()),
         AttributeValue::N(n) => n
@@ -271,6 +273,17 @@ fn attribute_value_to_json(v: &aws_sdk_dynamodb::types::AttributeValue) -> Value
         AttributeValue::Null(_) => Value::Null,
         AttributeValue::Ss(arr) => json!(arr),
         AttributeValue::Ns(arr) => json!(arr),
+        // Binary: render as base64-encoded string. Pre-fix B/Bs fell through
+        // the `_ => format!("{:?}", v)` arm and emitted Rust Debug strings
+        // like "B(Blob { inner: [104, 101, 108, 108, 111] })" — unusable as
+        // a round-trip-ready AttributeValue representation. base64 is the
+        // standard cross-language encoding for DynamoDB binary attributes.
+        AttributeValue::B(blob) => Value::String(b64.encode(blob.as_ref())),
+        AttributeValue::Bs(arr) => Value::Array(
+            arr.iter()
+                .map(|b| Value::String(b64.encode(b.as_ref())))
+                .collect(),
+        ),
         AttributeValue::L(arr) => Value::Array(arr.iter().map(attribute_value_to_json).collect()),
         AttributeValue::M(m) => {
             let obj: serde_json::Map<String, Value> = m
