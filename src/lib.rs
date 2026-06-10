@@ -616,4 +616,56 @@ mod tests {
         let v = attribute_value_to_json(&av);
         assert_eq!(v[0]["k"], json!("v"));
     }
+
+    // Regression catcher: the N→i64→f64→string fallback chain MUST try
+    // i64 before f64. If a future refactor swaps the order, every integer
+    // boundary (incl. i64::MAX / i64::MIN, which a DynamoDB sort key or
+    // counter can hit exactly) silently degrades through f64 and loses
+    // the last 3 bits of precision (f64 mantissa is 53 bits, i64 is 64).
+    // Hard-coded literals here are the boundary; not the value-under-test.
+    #[test]
+    fn av_number_i64_boundary_round_trips_exactly() {
+        let max = AttributeValue::N(i64::MAX.to_string());
+        let got_max = attribute_value_to_json(&max);
+        assert_eq!(got_max, json!(i64::MAX));
+        // serde_json::Value::as_i64() must succeed — proves it's still in
+        // the i64 lane, not the f64 lane (where it would lose precision).
+        assert_eq!(got_max.as_i64(), Some(i64::MAX));
+
+        let min = AttributeValue::N(i64::MIN.to_string());
+        let got_min = attribute_value_to_json(&min);
+        assert_eq!(got_min, json!(i64::MIN));
+        assert_eq!(got_min.as_i64(), Some(i64::MIN));
+    }
+
+    // Sign-handling regression catcher: the existing tests only cover
+    // positive integers. A future swap to `parse::<u64>()` (a common
+    // "optimization" for non-negative IDs) would silently reject all
+    // negative N values and divert them through the f64 lane, which
+    // accepts negatives but loses precision near i64::MIN. Pin the
+    // negative-int → i64 path explicitly.
+    #[test]
+    fn av_number_negative_integer_decodes_to_i64() {
+        let av = AttributeValue::N("-12345".into());
+        let v = attribute_value_to_json(&av);
+        assert_eq!(v, json!(-12345_i64));
+        assert_eq!(v.as_i64(), Some(-12345));
+    }
+
+    // Empty-collection bug-class catcher: a naive refactor that indexes
+    // arr[0] / m.iter().next().unwrap() on the recursive branch would
+    // panic here. The .iter().map().collect() pattern must tolerate
+    // zero-length input silently. Also pins the JSON shape: empty L
+    // renders [] (not null), empty M renders {} (not null) — DynamoDB
+    // round-trip consumers depend on this discrimination.
+    #[test]
+    fn av_empty_list_and_map_render_as_empty_collections() {
+        let empty_l = AttributeValue::L(vec![]);
+        assert_eq!(attribute_value_to_json(&empty_l), json!([]));
+        assert!(attribute_value_to_json(&empty_l).is_array());
+
+        let empty_m = AttributeValue::M(HashMap::new());
+        assert_eq!(attribute_value_to_json(&empty_m), json!({}));
+        assert!(attribute_value_to_json(&empty_m).is_object());
+    }
 }
