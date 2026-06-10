@@ -681,3 +681,112 @@ mod tests {
         assert!(attribute_value_to_json(&empty_m).is_object());
     }
 }
+
+#[cfg(test)]
+mod ffi_tests {
+    //! FFI safety pins. The cdylib is dlopened in-process by stryke;
+    //! a panic here crashes the host shell, a UB read here corrupts
+    //! the host's address space. These tests defend the C-ABI contract
+    //! against regressions that would only surface at runtime on a
+    //! caller's machine.
+    use super::*;
+    use std::ffi::CStr;
+    use std::ptr;
+
+    // Helper: drain an export's *const c_char into an owned String AND
+    // free the underlying CString through the public free symbol, so
+    // we exercise the full alloc/free contract every test.
+    unsafe fn drain(p: *const c_char) -> String {
+        assert!(!p.is_null(), "export returned null pointer");
+        let s = CStr::from_ptr(p).to_string_lossy().into_owned();
+        stryke_free_cstring(p as *mut c_char);
+        s
+    }
+
+    // Catches: regression where someone removes the `args.is_null()`
+    // branch in `ffi_call_async` and unconditionally dereferences via
+    // `CStr::from_ptr(args)`. A null deref here is instant UB — the
+    // host shell would segfault on `use AWS; AWS::pkg_version()` if
+    // stryke ever passes a null args pointer (which it does for
+    // zero-arg ops). The branch is on line 415; pin its behavior.
+    #[test]
+    fn ffi_null_args_returns_well_formed_json_not_segfault() {
+        let raw = aws__pkg_version(ptr::null());
+        let s = unsafe { drain(raw) };
+        let v: Value = serde_json::from_str(&s).expect("output must be valid JSON");
+        // pkg_version specifically must surface a version string, not
+        // an error — proves the null-args path reached the handler.
+        assert_eq!(
+            v["version"],
+            json!(env!("CARGO_PKG_VERSION")),
+            "pkg_version should ignore args and return crate version, got {s}"
+        );
+        assert!(v.get("error").is_none(), "null args must not produce error");
+    }
+
+    // Catches: regression where invalid JSON in `args` either (a)
+    // panics across the FFI boundary (instant UB in C callers) or (b)
+    // is silently propagated as garbage. Current contract per line
+    // 419 (`unwrap_or(Value::Null)`) is "silently substitute Null" —
+    // handlers that don't read args must still succeed. If a future
+    // refactor swaps to `.unwrap()` or `.expect(...)`, the panic
+    // would be caught by `catch_unwind` and surface as an error JSON
+    // instead of the version. This test pins the "tolerate garbage,
+    // succeed when handler ignores it" contract.
+    #[test]
+    fn ffi_invalid_json_args_does_not_crash_or_propagate_to_handler() {
+        // Embed an interior NUL-incompatible value via a CString with
+        // raw bytes that parse as definitely-not-JSON.
+        let garbage = std::ffi::CString::new("this is not json {[ ").unwrap();
+        let raw = aws__pkg_version(garbage.as_ptr());
+        let s = unsafe { drain(raw) };
+        let v: Value = serde_json::from_str(&s).expect("output must be valid JSON");
+        // Handler ignores args, so output should be the version, not
+        // an error from JSON parsing.
+        assert_eq!(v["version"], json!(env!("CARGO_PKG_VERSION")));
+        assert!(
+            v.get("error").is_none(),
+            "garbage args must be coerced to Null, not surfaced as error"
+        );
+    }
+
+    // Catches: regression where `std::panic::catch_unwind` or the
+    // `AssertUnwindSafe` wrapper is removed from `ffi_call_async`.
+    // Without panic recovery, a panic in any handler unwinds across
+    // the C ABI — undefined behavior, and in practice on Linux/macOS
+    // it aborts the host process (the stryke shell). This test calls
+    // the private `ffi_call_async` with a deliberately-panicking
+    // handler and asserts the panic is caught and surfaced as the
+    // contract's error JSON (`{"error":"stryke-aws handler panicked"}`).
+    #[test]
+    fn ffi_handler_panic_is_caught_and_returned_as_error_json() {
+        let raw = ffi_call_async(ptr::null(), |_v| async {
+            panic!("intentional test panic — must not cross FFI");
+        });
+        let s = unsafe { drain(raw) };
+        let v: Value = serde_json::from_str(&s).expect("output must be valid JSON");
+        assert_eq!(
+            v["error"],
+            json!("stryke-aws handler panicked"),
+            "panic must be caught and surfaced as the documented error \
+             string, got {s}"
+        );
+    }
+
+    // Catches: regression in `stryke_free_cstring`'s null guard at
+    // line 444. Removing the `if p.is_null() { return; }` would make
+    // `CString::from_raw(null)` an instant UB. Callers (stryke's FFI
+    // bridge) free EVERY returned pointer including ones from failed
+    // allocations, so null-tolerance is load-bearing. Also pins that
+    // free is idempotent against null — never reaches the drop path.
+    #[test]
+    fn ffi_free_cstring_tolerates_null_without_ub() {
+        unsafe {
+            stryke_free_cstring(ptr::null_mut());
+            // Calling twice would only matter if the first call had
+            // side effects — proving no side effects by surviving
+            // a second call.
+            stryke_free_cstring(ptr::null_mut());
+        }
+    }
+}
