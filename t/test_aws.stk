@@ -11,6 +11,10 @@
 ## CI without AWS access still exercises the FFI surface.
 
 use AWS
+use AWS::STS
+use AWS::S3
+use AWS::Dynamo
+use AWS::SQS
 
 # ── permission-free: cdylib reachable ───────────────────────────────
 val $version = AWS::version()
