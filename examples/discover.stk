@@ -1,0 +1,40 @@
+#!/usr/bin/env stryke
+# examples/discover.stk — minimum-viable tour of the `AWS` package.
+#
+# Runs end-to-end in CI: eval-guarded STS::caller_identity returns
+# undef when no creds are reachable. Read-only ops (s3 list buckets,
+# sts identity) have zero side effects. No round-trip writes happen here.
+#
+# Run:   s examples/discover.stk
+#        AWS_PROFILE=dev s examples/discover.stk
+
+use AWS
+use AWS::STS
+use AWS::S3
+
+p "=== AWS discover ==="
+p "version:     " . AWS::version()
+p "AWS_PROFILE: " . ($ENV{AWS_PROFILE} // "(default)")
+p "AWS_REGION:  " . ($ENV{AWS_REGION}  // $ENV{AWS_DEFAULT_REGION} // "(default)")
+p ""
+
+val $id = eval { AWS::STS::caller_identity() }
+val $have_creds = !$@ && defined $id && defined $id->{account}
+
+if ($have_creds) {
+    p "creds: reachable"
+    p "  account: $id->{account}"
+    p "  arn:     $id->{arn}"
+    val @buckets = eval { AWS::S3::buckets() }
+    if (!$@) {
+        p "  s3 buckets visible: " . scalar(@buckets)
+    }
+} else {
+    p "creds: not reachable — skipping live ops"
+    p ""
+    p "expected call shape when live:"
+    p "  val \$id      = AWS::STS::caller_identity()"
+    p "  val @buckets = AWS::S3::buckets()"
+    p "  val \$body    = AWS::S3::get(\"s3://bucket/key\")"
+    p "  val \$ok      = AWS::Dynamo::put(\$table, \\%item)"
+}
