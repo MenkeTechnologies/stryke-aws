@@ -29,15 +29,14 @@ slim.
 - [\[0x00\] Why this is a package, not a builtin](#0x00-why-this-is-a-package-not-a-builtin)
 - [\[0x01\] Install](#0x01-install)
 - [\[0x02\] Quick start](#0x02-quick-start)
-- [\[0x03\] CLI: `aws`](#0x03-cli-aws)
-- [\[0x04\] API reference](#0x04-api-reference)
-- [\[0x05\] Helper protocol](#0x05-helper-protocol)
-- [\[0x06\] DynamoDB type encoding](#0x06-dynamodb-type-encoding)
-- [\[0x07\] LocalStack / MinIO](#0x07-localstack-minio)
-- [\[0x08\] Tests](#0x08-tests)
-- [\[0x09\] Dev workflow](#0x09-dev-workflow)
-- [\[0x0A\] Layout](#0x0a-layout)
-- [\[0x0B\] Roadmap](#0x0b-roadmap)
+- [\[0x03\] API reference](#0x03-api-reference)
+- [\[0x04\] FFI layer](#0x04-ffi-layer)
+- [\[0x05\] DynamoDB type encoding](#0x05-dynamodb-type-encoding)
+- [\[0x06\] LocalStack / MinIO](#0x06-localstack-minio)
+- [\[0x07\] Tests](#0x07-tests)
+- [\[0x08\] Dev workflow](#0x08-dev-workflow)
+- [\[0x09\] Layout](#0x09-layout)
+- [\[0x0A\] Roadmap](#0x0a-roadmap)
 - [\[0xFF\] License](#0xff-license)
 
 ---
@@ -46,13 +45,15 @@ slim.
 
 The official aws-sdk-rust crates pull in tokio, hyper, rustls, and a fat
 chain of smithy / signing / endpoint-resolution support code. Five SDKs
-combined produce a ~12 MB helper binary — way too much to bake into stryke
-core. This package ships them once, opt-in.
+combined are way too much to bake into stryke core. This package ships
+them once, opt-in.
 
-`stryke-aws` mirrors the `stryke-mysql` / `stryke-postgres` shape: a thin
-stryke library spawns a Rust helper binary per call and parses JSON over
-the pipe. Credentials and region come from the standard AWS chain (env
-vars, `~/.aws/config|credentials`, IMDS) — same as the `aws` CLI.
+`stryke-aws` ships a thin stryke library plus a Rust cdylib
+(`libstryke_aws.{dylib,so}`) that stryke's FFI bridge dlopens in-process
+on first `use AWS` — no helper-binary fork per call (the v1 helper-binary
+model was replaced in v0.2.0). Credentials and region come from the
+standard AWS chain (env vars, `~/.aws/config|credentials`, IMDS) — same
+as the `aws` CLI.
 
 ## [0x01] Install
 
@@ -94,7 +95,7 @@ use AWS::STS
 # Identity check.
 p to_json AWS::STS::caller_identity()
 
-# S3 — list, get, put, head, rm, presign.
+# S3 — list, get, put, head, rm.
 my @keys = AWS::S3::ls "s3://my-bucket/prefix/", delimiter => "/"
 for my $e (@keys) {
     p "$e->{type}: $e->{key}"
@@ -104,19 +105,10 @@ AWS::S3::put "s3://my-bucket/hello.txt", data => "hello from stryke"
 p AWS::S3::get  "s3://my-bucket/hello.txt"
 p to_json AWS::S3::head "s3://my-bucket/hello.txt"
 
-p AWS::S3::presign("s3://my-bucket/dl.zip", expires => 600)->{url}
-
-# DynamoDB — items, query, scan. Plain JSON in/out (no AttributeValue).
+# DynamoDB — items. Plain JSON in/out (no AttributeValue).
 AWS::Dynamo::put "users", { id => "u-42", name => "alice", score => 1.5 }
 p to_json AWS::Dynamo::get "users", { id => "u-42" }
-
-my @hits = AWS::Dynamo::query "users",
-    expr => "id = :id",
-    vals => { ":id" => "u-42" }
-
-# Scan streaming — no full-result buffering.
-AWS::Dynamo::scan_stream "users",
-    callback => sub ($row) { process $row }
+p for AWS::Dynamo::tables()
 
 # SQS — send / long-poll / pump.
 AWS::SQS::send $queue_url, "payload"
@@ -141,61 +133,13 @@ AWS::S3::ls "s3://...",
     endpoint => "http://localstack:4566"       # for LocalStack / MinIO
 ```
 
-## [0x03] CLI: `aws`
-
-```sh
-aws s3 ls s3://bucket/prefix/ --delimiter=/
-aws s3 get s3://bucket/key --output=local.bin
-aws s3 put s3://bucket/key --input=local.bin
-aws s3 head s3://bucket/key
-aws s3 rm s3://bucket/key
-aws s3 presign s3://bucket/key --method=PUT --expires=600
-aws s3 buckets
-
-aws ddb get   users --key='{"id":"u-42"}'
-aws ddb put   users --item='{"id":"u-42","name":"alice"}'
-aws ddb query users --expr='id = :id' --vals='{":id":"u-42"}'
-aws ddb scan  users --filter='attribute_exists(active)' --limit=100
-aws ddb batch-write users < items.ndjson
-aws ddb tables
-aws ddb describe users
-
-aws sqs send    QUEUE_URL --body='...'
-aws sqs receive QUEUE_URL --max=10 --wait=20
-aws sqs delete  QUEUE_URL --receipt=...
-aws sqs attrs   QUEUE_URL
-aws sqs list
-
-aws lambda invoke my-fn --payload='{"x":1}'
-aws lambda invoke my-fn --invocation-type=event
-aws lambda list
-
-aws sts caller-identity
-aws sts assume-role arn:aws:iam::123:role/dev --session=demo --duration=3600
-
-aws ping                                  # alias: sts caller-identity
-aws build                                 # cargo build --release
-aws version
-```
-
-Global flags (also pull from env):
-
-```
--r, --region REGION         $AWS_REGION
-    --profile NAME          $AWS_PROFILE
-    --endpoint URL          $AWS_ENDPOINT_URL    (LocalStack / MinIO / custom)
-```
-
-Credentials use the standard AWS chain: env vars → profile in
-`~/.aws/credentials` → IMDS (EC2) → SSO. No `--access-key` / `--secret-key`
-flags — set the env vars or use a profile.
-
-## [0x04] API reference
+## [0x03] API reference
 
 ### `use AWS`
 
-Plumbing only — `AWS::helper_path()`, `AWS::ensure_built()`,
-`AWS::version()`, `AWS::ping(%opts)`.
+Plumbing only — `AWS::version()` (cdylib package version) and
+`AWS::ping(%opts)` (STS-backed connectivity probe), plus the flat
+`AWS::<service>_<op>` fns that the namespaced wrappers below delegate to.
 
 ### `use AWS::S3`
 
@@ -205,7 +149,7 @@ AWS::S3::get      $uri, %opts → $body (or $path when output=>"PATH")
 AWS::S3::put      $uri, %opts → \%resp        # data=>$bytes | input=>"PATH"
 AWS::S3::head     $uri, %opts → \%resp
 AWS::S3::rm       $uri, %opts → \%resp
-AWS::S3::presign  $uri, %opts → \%resp        # %opts: method, expires
+AWS::S3::presign  $uri, %opts → dies          # deferred in the v0.2.x cdylib
 AWS::S3::buckets  %opts        → @buckets
 ```
 
@@ -217,17 +161,15 @@ storage_class}` or `{type=>"prefix", key}` when `delimiter` is set.
 ```stryke
 AWS::Dynamo::get          $table, $key, %opts → \%item | undef
 AWS::Dynamo::put          $table, $item, %opts → { ok: 1 }
-AWS::Dynamo::delete       $table, $key, %opts → { ok: 1 }
-AWS::Dynamo::query        $table, %opts → @items       # opts: expr (req), vals, names, index, filter, limit, consistent
-AWS::Dynamo::scan         $table, %opts → @items
-AWS::Dynamo::scan_stream  $table, %opts → $count       # callback per item
-AWS::Dynamo::batch_write  $table, \@rows, %opts → 1    # rows: items or { _delete: {…key…} }
 AWS::Dynamo::tables       %opts → @names
-AWS::Dynamo::describe     $table, %opts → \%info
 ```
 
+`delete`, `query`, `scan`, `scan_stream`, `batch_write`, and `describe`
+are deferred in the v0.2.x cdylib — they die with a message naming the
+missing FFI export.
+
 Plain-JSON in/out. Binary attributes round-trip as `"base64:…"` strings on
-the JSON side (the helper unwraps and rewraps the `B` envelope).
+the JSON side (the cdylib unwraps and rewraps the `B` envelope).
 
 ### `use AWS::SQS`
 
@@ -235,46 +177,46 @@ the JSON side (the helper unwraps and rewraps the `B` envelope).
 AWS::SQS::send     $queue, $body, %opts → \%resp       # opts: delay_seconds, dedup_id, group_id
 AWS::SQS::receive  $queue, %opts → @messages           # opts: max, wait, visibility
 AWS::SQS::delete   $queue, $receipt, %opts → { ok: 1 }
-AWS::SQS::purge    $queue, %opts → { ok: 1 }
-AWS::SQS::attrs    $queue, %opts → \%attrs
-AWS::SQS::list     %opts → @urls
+AWS::SQS::list     %opts → @urls                       # prefix filter deferred
 AWS::SQS::pump     $queue, %opts → $count              # callback + auto-delete on success
 ```
+
+`purge` and `attrs` are deferred in the v0.2.x cdylib.
 
 ### `use AWS::Lambda`
 
 ```stryke
-AWS::Lambda::invoke $name, $payload, %opts → \%resp    # status_code, function_error, payload, log_tail, executed_version
-AWS::Lambda::call   $name, $payload, %opts → \%payload # convenience: returns just .payload (or undef on function_error)
+AWS::Lambda::invoke $name, $payload, %opts → \%resp    # { function, status_code, result }
+AWS::Lambda::call   $name, $payload, %opts → $result   # convenience: just .result (undef unless status_code == 200)
 AWS::Lambda::list   %opts → @functions
 ```
+
+`invocation_type => "event"` (fire-and-forget) is deferred in the v0.2.x
+cdylib.
 
 ### `use AWS::STS`
 
 ```stryke
 AWS::STS::caller_identity %opts → { account, arn, user_id }
-AWS::STS::assume_role     $role_arn, session => "...", %opts → { access_key_id, secret_access_key, session_token, expiration, assumed_role_arn }
+AWS::STS::assume_role     $role_arn, %opts → dies      # deferred in the v0.2.x cdylib
 ```
 
-## [0x05] Helper protocol
+## [0x04] FFI layer
 
-```sh
-stryke-aws-helper s3 ls s3://bucket/prefix --delimiter=/
-stryke-aws-helper s3 put s3://bucket/k --input=- < file
-stryke-aws-helper ddb put users --item='{"id":"u-42","name":"alice"}'
-stryke-aws-helper ddb query users --expr='id = :id' --vals='{":id":"u-42"}'
-stryke-aws-helper sqs receive https://sqs… --max=10 --wait=20
-stryke-aws-helper lambda invoke my-fn --payload='{"x":1}'
-stryke-aws-helper sts caller-identity
-```
+Each `AWS::*` wrapper builds a JSON args dict and calls a sibling
+`aws__*` symbol resolved out of `libstryke_aws.{dylib,so}`. The cdylib
+is dlopened in-process on first `use AWS` (via stryke's
+`pkg::commands::try_load_ffi_for` resolver hook) and exposes the entry
+points listed in the `[ffi]` exports table in `stryke.toml`, spanning
+STS, S3, DynamoDB, SQS, and Lambda.
 
-Output:
+**Persistent state:** a shared tokio runtime + an `aws_config::SdkConfig`
+cache per region held in `OnceCell` — no fork-per-call, no full
+IMDS/SSO/env creds chain on each call.
 
-* List / stream commands → NDJSON, one JSON object per line.
-* Single-object commands → one JSON object + newline.
-* All errors → exit non-zero, message on stderr.
+Errors come back as `{"error": "<msg>"}` — the wrapper `die`s with it.
 
-## [0x06] DynamoDB type encoding
+## [0x05] DynamoDB type encoding
 
 Plain JSON → `AttributeValue`:
 
@@ -289,9 +231,9 @@ Plain JSON → `AttributeValue`:
 
 Set types (`SS` / `NS` / `BS`) round-trip *out* as JSON arrays — on the
 write path, pass them as `L` (an array) and DynamoDB will store as a list,
-or use the raw helper if you specifically need a typed set.
+or extend the cdylib export list if you specifically need a typed set.
 
-## [0x07] LocalStack / MinIO
+## [0x06] LocalStack / MinIO
 
 ```stryke
 my %ls = (endpoint => "http://localhost:4566", region => "us-east-1")
@@ -301,7 +243,7 @@ AWS::SQS::list(%ls)   |> ep
 
 `$ENV{AWS_ENDPOINT_URL}` works as a global default.
 
-## [0x08] Tests
+## [0x07] Tests
 
 ```sh
 cargo test                                          # compiles, no live calls
@@ -314,10 +256,10 @@ export STRYKE_AWS_TEST_QUEUE=https://sqs.us-east-1.amazonaws.com/.../my-q
 s test t/
 ```
 
-The suite skips cleanly when the helper isn't built, when credentials are
+The suite skips cleanly when the cdylib isn't installed, when credentials are
 missing, or when the per-service env vars are unset.
 
-## [0x09] Dev workflow
+## [0x08] Dev workflow
 
 ```sh
 make             # release build
@@ -327,18 +269,15 @@ make install
 make clean
 ```
 
-## [0x0A] Layout
+## [0x09] Layout
 
 ```
 stryke-aws/
   stryke.toml                      # stryke package manifest
-  Cargo.toml                       # Rust helper crate manifest
+  Cargo.toml                       # cdylib crate manifest
   Makefile
   src/
-    main.rs                        # CLI dispatch
-    common.rs                      # shared helpers
-    s3.rs / ddb.rs / sqs.rs
-    lambda.rs / sts.rs
+    lib.rs                         # cdylib — aws__* extern "C" exports
   lib/
     AWS.stk                        # `use AWS` — plumbing + ping
     S3.stk                         # `use AWS::S3`
@@ -348,22 +287,25 @@ stryke-aws/
     STS.stk                        # `use AWS::STS`
   t/
     test_aws.stk                   # end-to-end (gated on creds + opt-in env vars)
+    test_stryke_aws_surface.stk    # wrapper-completeness pin
   examples/
-    s3_browse.stk
     ddb_demo.stk
-    sqs_pump.stk
+    discover.stk
     lambda_call.stk
+    s3_browse.stk
+    sqs_pump.stk
+    whoami.stk
   .github/workflows/
     ci.yml                         # cargo + compile-only (no live AWS)
     release.yml                    # cross-compile + GH release on tag push
 ```
 
-## [0x0B] Roadmap
+## [0x0A] Roadmap
 
-| v1 (this release) | v2+ |
+| Shipped (v0.2.x) | Later |
 |---|---|
-| S3, DynamoDB, SQS, Lambda, STS | CloudWatch Logs, EC2, IAM, KMS, Secrets Manager |
-| Single-shot per call | Persistent serve daemon over a Unix socket |
+| S3, DynamoDB, SQS, Lambda, STS (focused op subset) | CloudWatch Logs, EC2, IAM, KMS, Secrets Manager |
+| In-process cdylib + persistent SdkConfig cache | Deferred ops: DDB query/scan, S3 presign, STS assume_role, SQS purge/attrs |
 | Plain JSON DDB | Typed-set passthrough, optimistic-locking helpers |
 | Buffered S3 put | Streaming multipart upload |
 
