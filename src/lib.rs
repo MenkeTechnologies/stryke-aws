@@ -869,4 +869,101 @@ mod ffi_tests {
             stryke_free_cstring(ptr::null_mut());
         }
     }
+
+    // Catches: regression in the `Ok(Err(e))` arm of `ffi_call_async`
+    // (line 438). Every real op handler returns `anyhow::Result` and the
+    // common path is failure (missing `bucket`/`table`/`key`, network
+    // error, AWS API error). The contract is that a handler `Err` is
+    // mapped to `{"error": "<e.to_string()>"}` — verbatim, no wrapping,
+    // no key rename. stryke's bridge inspects the `error` key to decide
+    // success vs failure, so a regression that renamed the key, nested
+    // the message, or dropped the original `e.to_string()` text would
+    // silently break error reporting for every op. The success and
+    // panic arms are already pinned; this pins the handler-error arm.
+    #[test]
+    fn ffi_handler_err_maps_to_error_key_with_verbatim_message() {
+        let raw = ffi_call_async(ptr::null(), |_v| async { Err(anyhow!("missing bucket")) });
+        let s = unsafe { drain(raw) };
+        let v: Value = serde_json::from_str(&s).expect("output must be valid JSON");
+        assert_eq!(
+            v["error"],
+            json!("missing bucket"),
+            "handler Err must surface as {{\"error\": <verbatim message>}}, got {s}"
+        );
+        // The error message must be the top-level value of `error`, not
+        // nested under another object/array.
+        assert!(
+            v["error"].is_string(),
+            "error must be a flat string, not a nested structure: {s}"
+        );
+    }
+
+    // Catches: regression where `ffi_call_async` stops threading the
+    // parsed args `Value` through to the handler — e.g. a refactor that
+    // hardcodes `handler(Value::Null)` or parses into the wrong binding.
+    // Every existing FFI test drives `aws__pkg_version`, which IGNORES
+    // its args, so none of them would notice if args silently became
+    // Null. This handler echoes back what it received, proving a
+    // non-null args pointer is (a) parsed as JSON and (b) delivered
+    // intact — including a nested structure and a unicode string, which
+    // also pins that `CStr::to_bytes()` (NOT `to_bytes_with_nul()`) is
+    // used so the trailing C NUL is stripped before serde parses. If
+    // the terminating NUL leaked into the parse buffer, serde would
+    // reject the doc and the handler would receive Null instead.
+    #[test]
+    fn ffi_args_are_parsed_and_threaded_to_handler_intact() {
+        let doc = std::ffi::CString::new(r#"{"region":"eu-wést-1","nested":{"n":42}}"#).unwrap();
+        let raw = ffi_call_async(doc.as_ptr(), |v| async move {
+            // Echo the received value straight back so the test can
+            // assert what the handler actually saw.
+            Ok(v)
+        });
+        let s = unsafe { drain(raw) };
+        let v: Value = serde_json::from_str(&s).expect("output must be valid JSON");
+        assert_eq!(
+            v["region"],
+            json!("eu-wést-1"),
+            "unicode arg value must reach the handler byte-for-byte, got {s}"
+        );
+        assert_eq!(
+            v["nested"]["n"],
+            json!(42),
+            "nested arg structure must reach the handler intact, got {s}"
+        );
+        assert!(
+            v.get("error").is_none(),
+            "valid JSON args must parse cleanly, not degrade to error/Null: {s}"
+        );
+    }
+
+    // Catches: regression where the args-parse failure path (line 432,
+    // `unwrap_or(Value::Null)`) is changed so that MALFORMED JSON in a
+    // NON-NULL pointer reaches the handler as garbage rather than Null.
+    // Distinct from the existing `ffi_invalid_json_args_*` test, which
+    // drives the args-ignoring `pkg_version`: this one uses a handler
+    // that branches on whether it received Null, proving the malformed
+    // bytes were coerced to `Value::Null` specifically (not, say, an
+    // empty object or a panic). The contract "unparseable args ⇒ Null
+    // handed to handler" is what lets every op treat `opts["x"]` lookups
+    // as a clean miss rather than a parse crash.
+    #[test]
+    fn ffi_malformed_nonnull_args_reach_handler_as_null() {
+        let garbage = std::ffi::CString::new("{not valid json").unwrap();
+        let raw = ffi_call_async(garbage.as_ptr(), |v| async move {
+            // Report back exactly which Value the plumbing produced.
+            Ok(json!({ "was_null": v.is_null(), "received": v }))
+        });
+        let s = unsafe { drain(raw) };
+        let v: Value = serde_json::from_str(&s).expect("output must be valid JSON");
+        assert_eq!(
+            v["was_null"],
+            json!(true),
+            "malformed non-null args must be coerced to Value::Null, got {s}"
+        );
+        assert_eq!(
+            v["received"],
+            Value::Null,
+            "handler must receive JSON null, not a partial/garbage value: {s}"
+        );
+    }
 }
