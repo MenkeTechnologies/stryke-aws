@@ -78,7 +78,7 @@ make install
 
 The cdylib is dlopened in-process on first `use AWS`. A shared tokio
 runtime + `aws_config::SdkConfig` cache per region is held in `OnceCell`
-— no fork-per-call, no full IMDS/SSO/env creds chain on each call. v0.2.0
+— no fork-per-call, no full IMDS/SSO/env creds chain on each call. v0.2.1
 covers a focused subset across S3, DynamoDB, SQS, Lambda, STS; the v1
 helper's broader op set can be added incrementally.
 
