@@ -52,9 +52,10 @@ fn AWS::S3::put ($uri, %opts) {
     AWS::s3_put_object($bucket, $key, $body, %opts)
 }
 
-## HEAD an object. Deferred in v0.2.0 (cdylib doesn't expose head_object yet).
+## Object metadata for an s3:// URI (content_length, content_type, etag, …).
 fn AWS::S3::head ($uri, %opts) {
-    die "AWS::S3::head: deferred in v0.2.0 cdylib — use AWS::S3::ls(s3://bucket/prefix) and filter, or add aws__s3_head_object"
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    AWS::s3_head_object($bucket, $key, %opts)
 }
 
 ## Delete an object.

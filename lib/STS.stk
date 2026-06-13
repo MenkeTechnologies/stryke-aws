@@ -11,8 +11,8 @@ fn AWS::STS::caller_identity (%opts) {
     AWS::sts_caller_identity(%opts)
 }
 
-## Assume an IAM role. Deferred in v0.2.0 — needs `aws__sts_assume_role`.
+## Assume an IAM role; returns temporary credentials. opts: session_name.
 fn AWS::STS::assume_role ($role_arn, %opts) {
-    die "AWS::STS::assume_role: deferred in v0.2.0 cdylib — add aws__sts_assume_role to the export list"
+    AWS::sts_assume_role($role_arn, %opts)
 }
 

@@ -27,6 +27,14 @@ exports = [
     "aws__sqs_delete_message",
     "aws__lambda_invoke",
     "aws__lambda_list_functions",
+    "aws__s3_head_object",
+    "aws__ddb_delete_item",
+    "aws__ddb_query",
+    "aws__ddb_scan",
+    "aws__ddb_describe_table",
+    "aws__sqs_purge_queue",
+    "aws__sqs_get_queue_attributes",
+    "aws__sts_assume_role",
 ]
 
 [scripts]

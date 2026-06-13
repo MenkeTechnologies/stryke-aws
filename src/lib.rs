@@ -296,7 +296,237 @@ fn attribute_value_to_json(v: &aws_sdk_dynamodb::types::AttributeValue) -> Value
     }
 }
 
+/// JSON value → DynamoDB `AttributeValue`. Mirrors the put_item mapping and
+/// recurses for arrays (L) and objects (M).
+fn json_to_attribute_value(v: &Value) -> aws_sdk_dynamodb::types::AttributeValue {
+    use aws_sdk_dynamodb::types::AttributeValue;
+    match v {
+        Value::String(s) => AttributeValue::S(s.clone()),
+        Value::Number(n) => AttributeValue::N(n.to_string()),
+        Value::Bool(b) => AttributeValue::Bool(*b),
+        Value::Null => AttributeValue::Null(true),
+        Value::Array(a) => AttributeValue::L(a.iter().map(json_to_attribute_value).collect()),
+        Value::Object(m) => AttributeValue::M(
+            m.iter()
+                .map(|(k, v)| (k.clone(), json_to_attribute_value(v)))
+                .collect(),
+        ),
+    }
+}
+
+/// Build a DynamoDB attribute map from a JSON object.
+fn json_obj_to_av_map(
+    obj: &serde_json::Map<String, Value>,
+) -> std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue> {
+    obj.iter()
+        .map(|(k, v)| (k.clone(), json_to_attribute_value(v)))
+        .collect()
+}
+
+/// Render a DynamoDB item map to a JSON object.
+fn ddb_item_to_json(
+    m: &std::collections::HashMap<String, aws_sdk_dynamodb::types::AttributeValue>,
+) -> Value {
+    Value::Object(
+        m.iter()
+            .map(|(k, v)| (k.clone(), attribute_value_to_json(v)))
+            .collect(),
+    )
+}
+
+async fn op_ddb_delete_item(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let key = opts["key"]
+        .as_object()
+        .ok_or_else(|| anyhow!("missing key (object)"))?;
+    let mut req = client.delete_item().table_name(&table);
+    for (k, v) in key {
+        req = req.key(k, json_to_attribute_value(v));
+    }
+    req.send().await?;
+    Ok(json!({"table": table, "deleted": true}))
+}
+
+async fn op_ddb_query(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let key_cond = opts["key_condition"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing key_condition (a KeyConditionExpression)"))?;
+    let mut req = client
+        .query()
+        .table_name(&table)
+        .key_condition_expression(key_cond);
+    if let Some(values) = opts["values"].as_object() {
+        req = req.set_expression_attribute_values(Some(json_obj_to_av_map(values)));
+    }
+    if let Some(names) = opts["names"].as_object() {
+        let map = names
+            .iter()
+            .filter_map(|(k, v)| v.as_str().map(|s| (k.clone(), s.to_string())))
+            .collect();
+        req = req.set_expression_attribute_names(Some(map));
+    }
+    if let Some(f) = opts["filter"].as_str() {
+        req = req.filter_expression(f);
+    }
+    if let Some(i) = opts["index"].as_str() {
+        req = req.index_name(i);
+    }
+    if let Some(n) = opts["limit"].as_i64() {
+        req = req.limit(n as i32);
+    }
+    let r = req.send().await?;
+    let items: Vec<Value> = r.items().iter().map(ddb_item_to_json).collect();
+    Ok(json!({"table": table, "items": items, "count": r.count()}))
+}
+
+async fn op_ddb_scan(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let mut req = client.scan().table_name(&table);
+    if let Some(f) = opts["filter"].as_str() {
+        req = req.filter_expression(f);
+    }
+    if let Some(values) = opts["values"].as_object() {
+        req = req.set_expression_attribute_values(Some(json_obj_to_av_map(values)));
+    }
+    if let Some(n) = opts["limit"].as_i64() {
+        req = req.limit(n as i32);
+    }
+    let r = req.send().await?;
+    let items: Vec<Value> = r.items().iter().map(ddb_item_to_json).collect();
+    Ok(json!({"table": table, "items": items, "count": r.count(), "scanned": r.scanned_count()}))
+}
+
+async fn op_ddb_describe_table(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let r = client.describe_table().table_name(&table).send().await?;
+    let t = r.table();
+    Ok(json!({
+        "table": table,
+        "status": t.and_then(|t| t.table_status()).map(|s| s.as_str()),
+        "item_count": t.and_then(|t| t.item_count()),
+        "size_bytes": t.and_then(|t| t.table_size_bytes()),
+        "arn": t.and_then(|t| t.table_arn()),
+        "key_schema": t.map(|t| {
+            t.key_schema()
+                .iter()
+                .map(|k| json!({"name": k.attribute_name(), "type": k.key_type().as_str()}))
+                .collect::<Vec<_>>()
+        }),
+    }))
+}
+
+// ── S3 head ──────────────────────────────────────────────────────────────────
+
+async fn op_s3_head_object(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?
+        .to_string();
+    let key = opts["key"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing key"))?
+        .to_string();
+    let r = client
+        .head_object()
+        .bucket(&bucket)
+        .key(&key)
+        .send()
+        .await?;
+    Ok(json!({
+        "bucket": bucket,
+        "key": key,
+        "content_length": r.content_length(),
+        "content_type": r.content_type(),
+        "etag": r.e_tag(),
+        "last_modified": r.last_modified().map(|t| t.to_string()),
+    }))
+}
+
+// ── STS assume role ──────────────────────────────────────────────────────────
+
+async fn op_sts_assume_role(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sts::Client::new(&cfg);
+    let role_arn = opts["role_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing role_arn"))?;
+    let session = opts["session_name"].as_str().unwrap_or("stryke-aws");
+    let r = client
+        .assume_role()
+        .role_arn(role_arn)
+        .role_session_name(session)
+        .send()
+        .await?;
+    let creds = r.credentials();
+    Ok(json!({
+        "assumed_role": r.assumed_role_user().map(|u| u.arn().to_string()),
+        "access_key_id": creds.map(|c| c.access_key_id().to_string()),
+        "secret_access_key": creds.map(|c| c.secret_access_key().to_string()),
+        "session_token": creds.map(|c| c.session_token().to_string()),
+        "expiration": creds.map(|c| c.expiration().to_string()),
+    }))
+}
+
 // ── SQS ─────────────────────────────────────────────────────────────────────
+
+async fn op_sqs_purge_queue(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sqs::Client::new(&cfg);
+    let queue_url = opts["queue_url"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing queue_url"))?
+        .to_string();
+    client.purge_queue().queue_url(&queue_url).send().await?;
+    Ok(json!({"queue_url": queue_url, "purged": true}))
+}
+
+async fn op_sqs_get_queue_attributes(opts: Value) -> Result<Value> {
+    use aws_sdk_sqs::types::QueueAttributeName;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sqs::Client::new(&cfg);
+    let queue_url = opts["queue_url"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing queue_url"))?
+        .to_string();
+    let r = client
+        .get_queue_attributes()
+        .queue_url(&queue_url)
+        .attribute_names(QueueAttributeName::All)
+        .send()
+        .await?;
+    let attrs: serde_json::Map<String, Value> = r
+        .attributes()
+        .map(|m| {
+            m.iter()
+                .map(|(k, v)| (k.as_str().to_string(), Value::String(v.clone())))
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(json!({"queue_url": queue_url, "attributes": attrs}))
+}
 
 async fn op_sqs_list_queues(opts: Value) -> Result<Value> {
     let cfg = get_config(&opts).await;
@@ -542,6 +772,46 @@ pub extern "C" fn aws__lambda_invoke(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__lambda_list_functions(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_lambda_list_functions)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_head_object(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_head_object)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_delete_item(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_delete_item)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_query(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_query)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_scan(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_scan)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_describe_table(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_describe_table)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sqs_purge_queue(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sqs_purge_queue)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sqs_get_queue_attributes(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sqs_get_queue_attributes)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sts_assume_role(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sts_assume_role)
 }
 
 #[cfg(test)]
@@ -965,5 +1235,30 @@ mod ffi_tests {
             Value::Null,
             "handler must receive JSON null, not a partial/garbage value: {s}"
         );
+    }
+
+    /// `json_to_attribute_value` ↔ `attribute_value_to_json` must round-trip
+    /// the scalar + nested-collection shapes query/scan/delete depend on. A
+    /// regression that drops the L/M recursion would silently flatten nested
+    /// items to Debug strings on the way back.
+    #[test]
+    fn attribute_value_round_trips_nested() {
+        let input = json!({
+            "id": "abc",
+            "n": 42,
+            "ok": true,
+            "tags": ["x", "y"],
+            "meta": { "k": "v", "nested": [1, 2] }
+        });
+        let obj = input.as_object().unwrap();
+        let av_map = json_obj_to_av_map(obj);
+        let back = ddb_item_to_json(&av_map);
+        // Numbers come back as JSON numbers, strings as strings, nested intact.
+        assert_eq!(back["id"], "abc");
+        assert_eq!(back["n"], 42);
+        assert_eq!(back["ok"], true);
+        assert_eq!(back["tags"], json!(["x", "y"]));
+        assert_eq!(back["meta"]["k"], "v");
+        assert_eq!(back["meta"]["nested"], json!([1, 2]));
     }
 }

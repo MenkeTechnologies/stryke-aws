@@ -18,35 +18,35 @@ fn AWS::Dynamo::put ($table, $item, %opts) {
     AWS::ddb_put_item($table, $item, %opts)
 }
 
-## Delete one item by key. Deferred in v0.2.0 — needs `aws__ddb_delete_item`.
+## Delete one item by $key hashref. Returns 1 on success.
 fn AWS::Dynamo::delete ($table, $key, %opts) {
-    die "AWS::Dynamo::delete: deferred in v0.2.0 cdylib — add aws__ddb_delete_item to the export list"
+    AWS::ddb_delete_item($table, $key, %opts)
 }
 
-## Query / Scan / batch_write / scan_stream / describe — deferred in v0.2.0.
-## These need richer cdylib exports (filter/index/limit/pagination plumbing).
+## Query $table. opts: key_condition (required), values, names, filter, index,
+## limit. Returns a list of item hashrefs.
 fn AWS::Dynamo::query ($table, %opts) {
-    die "AWS::Dynamo::query: deferred in v0.2.0 cdylib — add aws__ddb_query to the export list"
+    AWS::ddb_query($table, %opts)
 }
 
-## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
+## Scan $table. opts: filter, values, limit. Returns a list of item hashrefs.
 fn AWS::Dynamo::scan ($table, %opts) {
-    die "AWS::Dynamo::scan: deferred in v0.2.0 cdylib — add aws__ddb_scan to the export list"
+    AWS::ddb_scan($table, %opts)
 }
 
-## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
+## Deferred in v0.2.0 cdylib — batch_write needs a BatchWriteItem export.
 fn AWS::Dynamo::batch_write ($table, $rows, %opts) {
     die "AWS::Dynamo::batch_write: deferred in v0.2.0 cdylib — add aws__ddb_batch_write to the export list"
 }
 
-## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
+## Deferred in v0.2.0 cdylib — paginated streaming scan needs a callback shape.
 fn AWS::Dynamo::scan_stream ($table, %opts) {
-    die "AWS::Dynamo::scan_stream: streaming + scan both deferred in v0.2.0 cdylib"
+    die "AWS::Dynamo::scan_stream: streaming scan deferred in v0.2.0 cdylib"
 }
 
-## Deferred in v0.2.0 cdylib — dies with a clear message naming the missing FFI export.
+## DescribeTable $table — status, item_count, key_schema, arn.
 fn AWS::Dynamo::describe ($table, %opts) {
-    die "AWS::Dynamo::describe: deferred in v0.2.0 cdylib — add aws__ddb_describe_table to the export list"
+    AWS::ddb_describe_table($table, %opts)
 }
 
 ## Returns a list of table names.

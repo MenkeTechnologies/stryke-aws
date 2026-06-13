@@ -51,6 +51,13 @@ fn AWS::sts_caller_identity (%opts) {
         aws__sts_caller_identity(to_json(AWS::_req({}, \%opts))))
 }
 
+## AssumeRole $role_arn. opts: session_name (default "stryke-aws"). Returns
+## { access_key_id, secret_access_key, session_token, expiration }.
+fn AWS::sts_assume_role ($role_arn, %opts) {
+    val $r = AWS::_req({ role_arn => $role_arn, session_name => $opts{session_name} }, \%opts)
+    AWS::_decode("sts_assume_role", aws__sts_assume_role(to_json($r)))
+}
+
 # ── S3 ──────────────────────────────────────────────────────────────
 
 ## List S3 bucket names visible to the caller.
@@ -85,6 +92,12 @@ fn AWS::s3_delete_object ($bucket, $key, %opts) {
     AWS::_decode("s3_delete_object", aws__s3_delete_object(to_json($r)))->{deleted} ? 1 : 0
 }
 
+## HeadObject metadata: { content_length, content_type, etag, last_modified }.
+fn AWS::s3_head_object ($bucket, $key, %opts) {
+    val $r = AWS::_req({ bucket => $bucket, key => $key }, \%opts)
+    AWS::_decode("s3_head_object", aws__s3_head_object(to_json($r)))
+}
+
 # ── DynamoDB ────────────────────────────────────────────────────────
 
 ## List DynamoDB table names.
@@ -106,6 +119,40 @@ fn AWS::ddb_get_item ($table, $key, %opts) {
     die "AWS::ddb_get_item: key must be hashref" unless ref($key) eq "HASH"
     val $r = AWS::_req({ table => $table, key => $key }, \%opts)
     AWS::_decode("ddb_get_item", aws__ddb_get_item(to_json($r)))->{item}
+}
+
+## DeleteItem from $table by $key hashref. Returns 1 on success.
+fn AWS::ddb_delete_item ($table, $key, %opts) {
+    die "AWS::ddb_delete_item: key must be hashref" unless ref($key) eq "HASH"
+    val $r = AWS::_req({ table => $table, key => $key }, \%opts)
+    AWS::_decode("ddb_delete_item", aws__ddb_delete_item(to_json($r)))->{deleted} ? 1 : 0
+}
+
+## Query $table. opts: key_condition (required), values (hashref of
+## :placeholder => value), names (hashref of #alias => attr), filter, index,
+## limit. Returns a list of item hashrefs.
+fn AWS::ddb_query ($table, %opts) {
+    val $r = AWS::_req(
+        { table => $table, key_condition => $opts{key_condition}, values => $opts{values},
+          names => $opts{names}, filter => $opts{filter}, index => $opts{index},
+          limit => $opts{limit} }, \%opts)
+    val $o = AWS::_decode("ddb_query", aws__ddb_query(to_json($r)))
+    @{ $o->{items} }
+}
+
+## Scan $table. opts: filter, values, limit. Returns a list of item hashrefs.
+fn AWS::ddb_scan ($table, %opts) {
+    val $r = AWS::_req(
+        { table => $table, filter => $opts{filter}, values => $opts{values},
+          limit => $opts{limit} }, \%opts)
+    val $o = AWS::_decode("ddb_scan", aws__ddb_scan(to_json($r)))
+    @{ $o->{items} }
+}
+
+## DescribeTable $table — status, item_count, key_schema, arn.
+fn AWS::ddb_describe_table ($table, %opts) {
+    AWS::_decode("ddb_describe_table",
+        aws__ddb_describe_table(to_json(AWS::_req({ table => $table }, \%opts))))
 }
 
 # ── SQS ─────────────────────────────────────────────────────────────
@@ -134,6 +181,18 @@ fn AWS::sqs_receive_message ($queue_url, %opts) {
 fn AWS::sqs_delete_message ($queue_url, $receipt_handle, %opts) {
     val $r = AWS::_req({ queue_url => $queue_url, receipt_handle => $receipt_handle }, \%opts)
     AWS::_decode("sqs_delete_message", aws__sqs_delete_message(to_json($r)))->{deleted} ? 1 : 0
+}
+
+## PurgeQueue — delete all messages. Returns 1 on success.
+fn AWS::sqs_purge_queue ($queue_url, %opts) {
+    AWS::_decode("sqs_purge_queue",
+        aws__sqs_purge_queue(to_json(AWS::_req({ queue_url => $queue_url }, \%opts))))->{purged} ? 1 : 0
+}
+
+## GetQueueAttributes — returns a hashref of all queue attributes.
+fn AWS::sqs_get_queue_attributes ($queue_url, %opts) {
+    AWS::_decode("sqs_get_queue_attributes",
+        aws__sqs_get_queue_attributes(to_json(AWS::_req({ queue_url => $queue_url }, \%opts))))->{attributes}
 }
 
 # ── Lambda ──────────────────────────────────────────────────────────

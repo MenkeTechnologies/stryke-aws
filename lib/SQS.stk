@@ -29,14 +29,14 @@ fn AWS::SQS::delete ($queue, $receipt, %opts) {
     AWS::sqs_delete_message($queue, $receipt, %opts) ? { deleted => 1 } : { deleted => 0 }
 }
 
-## Purge a queue. Deferred in v0.2.0.
+## Purge a queue — delete all its messages. Returns 1 on success.
 fn AWS::SQS::purge ($queue, %opts) {
-    die "AWS::SQS::purge: deferred in v0.2.0 cdylib — add aws__sqs_purge_queue to the export list"
+    AWS::sqs_purge_queue($queue, %opts)
 }
 
-## Queue attributes. Deferred in v0.2.0.
+## All queue attributes as a hashref (ApproximateNumberOfMessages, etc.).
 fn AWS::SQS::attrs ($queue, %opts) {
-    die "AWS::SQS::attrs: deferred in v0.2.0 cdylib — add aws__sqs_get_queue_attributes to the export list"
+    AWS::sqs_get_queue_attributes($queue, %opts)
 }
 
 ## List queue URLs (no prefix filter in v0.2.0 — extend cdylib if needed).

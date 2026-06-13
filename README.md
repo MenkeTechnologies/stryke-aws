@@ -161,15 +161,17 @@ storage_class}` or `{type=>"prefix", key}` when `delimiter` is set.
 ```stryke
 AWS::Dynamo::get          $table, $key, %opts → \%item | undef
 AWS::Dynamo::put          $table, $item, %opts → { ok: 1 }
+AWS::Dynamo::delete       $table, $key, %opts → 1 | 0
+AWS::Dynamo::query        $table, %opts → @items   # opts: key_condition, values, names, filter, index, limit
+AWS::Dynamo::scan         $table, %opts → @items   # opts: filter, values, limit
+AWS::Dynamo::describe     $table, %opts → \%info   # status, item_count, key_schema, arn
 AWS::Dynamo::tables       %opts → @names
 ```
 
-`delete`, `query`, `scan`, `scan_stream`, `batch_write`, and `describe`
-are deferred in the v0.2.x cdylib — they die with a message naming the
-missing FFI export.
-
-Plain-JSON in/out. Binary attributes round-trip as `"base64:…"` strings on
-the JSON side (the cdylib unwraps and rewraps the `B` envelope).
+`query`/`scan` take a DynamoDB expression plus a `values` hashref of
+`:placeholder => value` bindings (and optional `names` for `#alias`). Nested
+maps/lists round-trip recursively; binary attributes come back as
+`"base64:…"`. `batch_write` and `scan_stream` remain deferred.
 
 ### `use AWS::SQS`
 
@@ -178,10 +180,10 @@ AWS::SQS::send     $queue, $body, %opts → \%resp       # opts: delay_seconds, 
 AWS::SQS::receive  $queue, %opts → @messages           # opts: max, wait, visibility
 AWS::SQS::delete   $queue, $receipt, %opts → { ok: 1 }
 AWS::SQS::list     %opts → @urls                       # prefix filter deferred
+AWS::SQS::purge    $queue, %opts → 1 | 0               # delete all messages
+AWS::SQS::attrs    $queue, %opts → \%attributes        # GetQueueAttributes (All)
 AWS::SQS::pump     $queue, %opts → $count              # callback + auto-delete on success
 ```
-
-`purge` and `attrs` are deferred in the v0.2.x cdylib.
 
 ### `use AWS::Lambda`
 
@@ -198,7 +200,7 @@ cdylib.
 
 ```stryke
 AWS::STS::caller_identity %opts → { account, arn, user_id }
-AWS::STS::assume_role     $role_arn, %opts → dies      # deferred in the v0.2.x cdylib
+AWS::STS::assume_role     $role_arn, %opts → \%creds   # opts: session_name; temp credentials
 ```
 
 ## [0x04] FFI layer
@@ -304,8 +306,8 @@ stryke-aws/
 
 | Shipped (v0.2.x) | Later |
 |---|---|
-| S3, DynamoDB, SQS, Lambda, STS (focused op subset) | CloudWatch Logs, EC2, IAM, KMS, Secrets Manager |
-| In-process cdylib + persistent SdkConfig cache | Deferred ops: DDB query/scan, S3 presign, STS assume_role, SQS purge/attrs |
+| S3 (incl. head), DynamoDB (incl. query/scan/delete/describe), SQS (incl. purge/attrs), Lambda, STS (incl. assume_role) | CloudWatch Logs, EC2, IAM, KMS, Secrets Manager |
+| In-process cdylib + persistent SdkConfig cache | Deferred ops: DDB batch_write/scan_stream, S3 presign |
 | Plain JSON DDB | Typed-set passthrough, optimistic-locking helpers |
 | Buffered S3 put | Streaming multipart upload |
 
