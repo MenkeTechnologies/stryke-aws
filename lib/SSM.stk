@@ -1,0 +1,28 @@
+## lib/SSM.stk — `use AWS::SSM` (Systems Manager Parameter Store)
+##
+## Wraps `AWS::ssm_*` from the cdylib.
+
+package AWS::SSM
+
+use AWS
+
+## Get a parameter value. opts: with_decryption (for SecureString).
+fn AWS::SSM::get ($name, %opts) {
+    AWS::ssm_get_parameter($name, %opts)
+}
+
+## Put a parameter. opts: type (String|StringList|SecureString), overwrite.
+## Returns the new version number.
+fn AWS::SSM::put ($name, $value, %opts) {
+    AWS::ssm_put_parameter($name, $value, %opts)
+}
+
+## List { name, value } under $path. opts: recursive, with_decryption.
+fn AWS::SSM::by_path ($path, %opts) {
+    AWS::ssm_get_parameters_by_path($path, %opts)
+}
+
+## Delete a parameter by name. Returns 1 on success.
+fn AWS::SSM::delete ($name, %opts) {
+    AWS::ssm_delete_parameter($name, %opts)
+}

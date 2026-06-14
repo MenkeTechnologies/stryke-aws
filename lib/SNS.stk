@@ -1,0 +1,28 @@
+## lib/SNS.stk — `use AWS::SNS`
+##
+## Wraps `AWS::sns_*` from the cdylib.
+
+package AWS::SNS
+
+use AWS
+
+## List topic ARNs.
+fn AWS::SNS::topics (%opts) {
+    AWS::sns_list_topics(%opts)
+}
+
+## Create (idempotent) a standard topic; returns its ARN.
+fn AWS::SNS::create ($name, %opts) {
+    AWS::sns_create_topic($name, %opts)
+}
+
+## Publish $message. opts: topic_arn | target_arn | phone_number, subject.
+## Returns the message_id.
+fn AWS::SNS::publish ($message, %opts) {
+    AWS::sns_publish($message, %opts)
+}
+
+## Subscribe $endpoint to $topic_arn over $protocol; returns subscription ARN.
+fn AWS::SNS::subscribe ($topic_arn, $protocol, $endpoint, %opts) {
+    AWS::sns_subscribe($topic_arn, $protocol, $endpoint, %opts)
+}

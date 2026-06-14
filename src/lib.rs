@@ -68,6 +68,39 @@ async fn get_config(opts: &Value) -> SdkConfig {
     cfg
 }
 
+// ── shared helpers ───────────────────────────────────────────────────────────
+
+/// JSON scalar → DynamoDB AttributeValue. Mirrors the inline conversion in
+/// `op_ddb_put_item`: strings → S, numbers → N, bools → BOOL, null → NULL,
+/// anything else stringified to S.
+fn json_to_av(v: &Value) -> aws_sdk_dynamodb::types::AttributeValue {
+    use aws_sdk_dynamodb::types::AttributeValue;
+    match v {
+        Value::String(s) => AttributeValue::S(s.clone()),
+        Value::Number(n) => AttributeValue::N(n.to_string()),
+        Value::Bool(b) => AttributeValue::Bool(*b),
+        Value::Null => AttributeValue::Null(true),
+        other => AttributeValue::S(other.to_string()),
+    }
+}
+
+/// Accept a JSON array of strings or a single string; return Vec<String>.
+fn string_vec(v: &Value) -> Result<Vec<String>> {
+    match v {
+        Value::Array(a) => a
+            .iter()
+            .map(|x| {
+                x.as_str()
+                    .map(String::from)
+                    .ok_or_else(|| anyhow!("non-string in array"))
+            })
+            .collect(),
+        Value::String(s) => Ok(vec![s.clone()]),
+        Value::Null => Ok(Vec::new()),
+        _ => Err(anyhow!("expected string or array of strings")),
+    }
+}
+
 // ── S3 ──────────────────────────────────────────────────────────────────────
 
 async fn op_s3_list_buckets(opts: Value) -> Result<Value> {
@@ -648,6 +681,315 @@ async fn op_lambda_list_functions(opts: Value) -> Result<Value> {
     Ok(json!({"functions": names}))
 }
 
+// ── S3 copy + batch delete ───────────────────────────────────────────────────
+
+async fn op_s3_copy_object(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let src_bucket = opts["source_bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing source_bucket"))?;
+    let src_key = opts["source_key"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing source_key"))?;
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?;
+    let key = opts["key"].as_str().ok_or_else(|| anyhow!("missing key"))?;
+    let r = client
+        .copy_object()
+        .copy_source(format!("{}/{}", src_bucket, src_key))
+        .bucket(bucket)
+        .key(key)
+        .send()
+        .await?;
+    Ok(json!({
+        "bucket": bucket,
+        "key": key,
+        "etag": r.copy_object_result().and_then(|c| c.e_tag()).unwrap_or(""),
+    }))
+}
+
+async fn op_s3_delete_objects(opts: Value) -> Result<Value> {
+    use aws_sdk_s3::types::{Delete, ObjectIdentifier};
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?;
+    let keys = string_vec(&opts["keys"])?;
+    if keys.is_empty() {
+        return Err(anyhow!("keys must be a non-empty array"));
+    }
+    let mut ids = Vec::with_capacity(keys.len());
+    for k in &keys {
+        ids.push(ObjectIdentifier::builder().key(k).build()?);
+    }
+    let delete = Delete::builder().set_objects(Some(ids)).build()?;
+    let r = client
+        .delete_objects()
+        .bucket(bucket)
+        .delete(delete)
+        .send()
+        .await?;
+    let deleted: Vec<String> = r
+        .deleted()
+        .iter()
+        .filter_map(|d| d.key().map(String::from))
+        .collect();
+    Ok(json!({"bucket": bucket, "deleted": deleted}))
+}
+
+// ── DynamoDB update ───────────────────────────────────────────────────────────
+
+async fn op_ddb_update_item(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?;
+    let key = opts["key"]
+        .as_object()
+        .ok_or_else(|| anyhow!("missing key (object)"))?;
+    let updates = opts["updates"]
+        .as_object()
+        .ok_or_else(|| anyhow!("missing updates (object of attr => value)"))?;
+    if updates.is_empty() {
+        return Err(anyhow!("updates must be non-empty"));
+    }
+    // Build `SET #a0 = :v0, #a1 = :v1, ...` with name/value placeholders so
+    // reserved words and arbitrary attribute names are always legal.
+    let mut set_parts = Vec::new();
+    let mut req = client.update_item().table_name(table);
+    for (k, v) in key {
+        req = req.key(k, json_to_av(v));
+    }
+    for (i, (attr, val)) in updates.iter().enumerate() {
+        let nph = format!("#a{}", i);
+        let vph = format!(":v{}", i);
+        set_parts.push(format!("{} = {}", nph, vph));
+        req = req
+            .expression_attribute_names(nph, attr)
+            .expression_attribute_values(vph, json_to_av(val));
+    }
+    req = req.update_expression(format!("SET {}", set_parts.join(", ")));
+    req.send().await?;
+    Ok(json!({"table": table, "updated": true}))
+}
+
+// ── SNS ───────────────────────────────────────────────────────────────────────
+
+async fn op_sns_list_topics(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let r = client.list_topics().send().await?;
+    let topics: Vec<String> = r
+        .topics()
+        .iter()
+        .filter_map(|t| t.topic_arn().map(String::from))
+        .collect();
+    Ok(json!({"topics": topics}))
+}
+
+async fn op_sns_publish(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let message = opts["message"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing message"))?;
+    let mut req = client.publish().message(message);
+    if let Some(t) = opts["topic_arn"].as_str() {
+        req = req.topic_arn(t);
+    } else if let Some(p) = opts["phone_number"].as_str() {
+        req = req.phone_number(p);
+    } else if let Some(t) = opts["target_arn"].as_str() {
+        req = req.target_arn(t);
+    } else {
+        return Err(anyhow!("need topic_arn, target_arn, or phone_number"));
+    }
+    if let Some(s) = opts["subject"].as_str() {
+        req = req.subject(s);
+    }
+    let r = req.send().await?;
+    Ok(json!({"message_id": r.message_id().unwrap_or("")}))
+}
+
+async fn op_sns_create_topic(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let name = opts["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing name"))?;
+    let r = client.create_topic().name(name).send().await?;
+    Ok(json!({"topic_arn": r.topic_arn().unwrap_or("")}))
+}
+
+async fn op_sns_subscribe(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let topic_arn = opts["topic_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing topic_arn"))?;
+    let protocol = opts["protocol"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing protocol"))?;
+    let endpoint = opts["endpoint"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing endpoint"))?;
+    let r = client
+        .subscribe()
+        .topic_arn(topic_arn)
+        .protocol(protocol)
+        .endpoint(endpoint)
+        .return_subscription_arn(true)
+        .send()
+        .await?;
+    Ok(json!({"subscription_arn": r.subscription_arn().unwrap_or("")}))
+}
+
+// ── SSM Parameter Store ────────────────────────────────────────────────────────
+
+async fn op_ssm_get_parameter(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ssm::Client::new(&cfg);
+    let name = opts["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing name"))?;
+    let decrypt = opts["with_decryption"].as_bool().unwrap_or(false);
+    let r = client
+        .get_parameter()
+        .name(name)
+        .with_decryption(decrypt)
+        .send()
+        .await?;
+    let p = r.parameter();
+    Ok(json!({
+        "name": p.and_then(|p| p.name()).unwrap_or(""),
+        "value": p.and_then(|p| p.value()),
+        "version": p.map(|p| p.version()).unwrap_or(0),
+    }))
+}
+
+async fn op_ssm_put_parameter(opts: Value) -> Result<Value> {
+    use aws_sdk_ssm::types::ParameterType;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ssm::Client::new(&cfg);
+    let name = opts["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing name"))?;
+    let value = opts["value"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing value"))?;
+    let ptype = opts["type"].as_str().unwrap_or("String");
+    let overwrite = opts["overwrite"].as_bool().unwrap_or(false);
+    let r = client
+        .put_parameter()
+        .name(name)
+        .value(value)
+        .r#type(ParameterType::from(ptype))
+        .overwrite(overwrite)
+        .send()
+        .await?;
+    Ok(json!({"name": name, "version": r.version()}))
+}
+
+async fn op_ssm_get_parameters_by_path(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ssm::Client::new(&cfg);
+    let path = opts["path"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing path"))?;
+    let recursive = opts["recursive"].as_bool().unwrap_or(false);
+    let decrypt = opts["with_decryption"].as_bool().unwrap_or(false);
+    let r = client
+        .get_parameters_by_path()
+        .path(path)
+        .recursive(recursive)
+        .with_decryption(decrypt)
+        .send()
+        .await?;
+    let params: Vec<Value> = r
+        .parameters()
+        .iter()
+        .map(|p| json!({"name": p.name().unwrap_or(""), "value": p.value()}))
+        .collect();
+    Ok(json!({"parameters": params}))
+}
+
+async fn op_ssm_delete_parameter(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ssm::Client::new(&cfg);
+    let name = opts["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing name"))?;
+    client.delete_parameter().name(name).send().await?;
+    Ok(json!({"name": name, "deleted": true}))
+}
+
+// ── Secrets Manager ────────────────────────────────────────────────────────────
+
+async fn op_secrets_get_value(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_secretsmanager::Client::new(&cfg);
+    let id = opts["secret_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing secret_id"))?;
+    let r = client.get_secret_value().secret_id(id).send().await?;
+    Ok(json!({
+        "name": r.name().unwrap_or(""),
+        "secret_string": r.secret_string(),
+        "version_id": r.version_id().unwrap_or(""),
+    }))
+}
+
+async fn op_secrets_create(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_secretsmanager::Client::new(&cfg);
+    let name = opts["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing name"))?;
+    let secret = opts["secret_string"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing secret_string"))?;
+    let r = client
+        .create_secret()
+        .name(name)
+        .secret_string(secret)
+        .send()
+        .await?;
+    Ok(json!({"arn": r.arn().unwrap_or(""), "name": r.name().unwrap_or("")}))
+}
+
+async fn op_secrets_put_value(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_secretsmanager::Client::new(&cfg);
+    let id = opts["secret_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing secret_id"))?;
+    let secret = opts["secret_string"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing secret_string"))?;
+    let r = client
+        .put_secret_value()
+        .secret_id(id)
+        .secret_string(secret)
+        .send()
+        .await?;
+    Ok(json!({"version_id": r.version_id().unwrap_or("")}))
+}
+
+async fn op_secrets_list(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_secretsmanager::Client::new(&cfg);
+    let r = client.list_secrets().send().await?;
+    let secrets: Vec<Value> = r
+        .secret_list()
+        .iter()
+        .map(|s| json!({"name": s.name().unwrap_or(""), "arn": s.arn().unwrap_or("")}))
+        .collect();
+    Ok(json!({"secrets": secrets}))
+}
+
 // ── FFI plumbing ────────────────────────────────────────────────────────────
 
 fn ffi_call_async<F, Fut>(args: *const c_char, handler: F) -> *const c_char
@@ -814,11 +1156,125 @@ pub extern "C" fn aws__sts_assume_role(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_sts_assume_role)
 }
 
+#[no_mangle]
+pub extern "C" fn aws__s3_copy_object(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_copy_object)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_delete_objects(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_delete_objects)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_update_item(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_update_item)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_list_topics(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_list_topics)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_publish(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_publish)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_create_topic(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_create_topic)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_subscribe(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_subscribe)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ssm_get_parameter(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ssm_get_parameter)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ssm_put_parameter(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ssm_put_parameter)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ssm_get_parameters_by_path(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ssm_get_parameters_by_path)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ssm_delete_parameter(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ssm_delete_parameter)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__secrets_get_value(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_secrets_get_value)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__secrets_create(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_secrets_create)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__secrets_put_value(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_secrets_put_value)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__secrets_list(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_secrets_list)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use aws_sdk_dynamodb::types::AttributeValue;
     use std::collections::HashMap;
+
+    /// `json_to_av` (used by `op_ddb_update_item` and the new write paths) is
+    /// the inverse of `attribute_value_to_json`. Pin each scalar mapping:
+    /// string→S, integer/float→N (verbatim, no reformatting), bool→BOOL,
+    /// null→NULL. A regression that, e.g., maps numbers to S would silently
+    /// store a DynamoDB string where a number was intended (breaking range
+    /// queries on that attribute).
+    #[test]
+    fn json_to_av_maps_scalars_to_matching_attribute_types() {
+        assert_eq!(json_to_av(&json!("x")), AttributeValue::S("x".into()));
+        assert_eq!(json_to_av(&json!(42)), AttributeValue::N("42".into()));
+        assert_eq!(json_to_av(&json!(1.25)), AttributeValue::N("1.25".into()));
+        assert_eq!(json_to_av(&json!(true)), AttributeValue::Bool(true));
+        assert_eq!(json_to_av(&Value::Null), AttributeValue::Null(true));
+    }
+
+    /// A large integer must not be reformatted via float (which would lose
+    /// precision past 2^53). `serde_json::Number::to_string` preserves the
+    /// exact digits — pin it so a refactor through `as_f64().to_string()`
+    /// is caught.
+    #[test]
+    fn json_to_av_large_integer_preserves_exact_digits() {
+        let big = json!(9_007_199_254_740_993_i64); // 2^53 + 1
+        assert_eq!(
+            json_to_av(&big),
+            AttributeValue::N("9007199254740993".into())
+        );
+    }
+
+    #[test]
+    fn string_vec_accepts_array_single_and_null() {
+        assert_eq!(string_vec(&json!(["a", "b"])).unwrap(), vec!["a", "b"]);
+        assert_eq!(string_vec(&json!("solo")).unwrap(), vec!["solo"]);
+        assert!(string_vec(&Value::Null).unwrap().is_empty());
+        assert!(
+            string_vec(&json!(["a", 1])).is_err(),
+            "non-string element must error"
+        );
+    }
 
     #[test]
     fn av_string_roundtrips_as_json_string() {

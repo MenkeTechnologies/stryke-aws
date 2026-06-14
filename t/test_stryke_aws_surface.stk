@@ -20,6 +20,9 @@ use AWS::Lambda
 use AWS::S3
 use AWS::SQS
 use AWS::STS
+use AWS::SNS
+use AWS::SSM
+use AWS::Secrets
 
 # ── AWS.stk ──────────────────────────────────────────────
 assert_ok exists &AWS::version, "AWS::version exists"
@@ -85,5 +88,40 @@ assert_ok exists &AWS::SQS::pump, "AWS::SQS::pump exists"
 # ── STS.stk ──────────────────────────────────────────────
 assert_ok exists &AWS::STS::caller_identity, "AWS::STS::caller_identity exists"
 assert_ok exists &AWS::STS::assume_role, "AWS::STS::assume_role exists"
+
+# ── AWS.stk extras: S3 copy/batch, ddb update, SNS, SSM, Secrets ──
+assert_ok exists &AWS::s3_copy_object, "AWS::s3_copy_object exists"
+assert_ok exists &AWS::s3_delete_objects, "AWS::s3_delete_objects exists"
+assert_ok exists &AWS::ddb_update_item, "AWS::ddb_update_item exists"
+assert_ok exists &AWS::sns_list_topics, "AWS::sns_list_topics exists"
+assert_ok exists &AWS::sns_publish, "AWS::sns_publish exists"
+assert_ok exists &AWS::sns_create_topic, "AWS::sns_create_topic exists"
+assert_ok exists &AWS::sns_subscribe, "AWS::sns_subscribe exists"
+assert_ok exists &AWS::ssm_get_parameter, "AWS::ssm_get_parameter exists"
+assert_ok exists &AWS::ssm_put_parameter, "AWS::ssm_put_parameter exists"
+assert_ok exists &AWS::ssm_get_parameters_by_path, "AWS::ssm_get_parameters_by_path exists"
+assert_ok exists &AWS::ssm_delete_parameter, "AWS::ssm_delete_parameter exists"
+assert_ok exists &AWS::secrets_get_value, "AWS::secrets_get_value exists"
+assert_ok exists &AWS::secrets_create, "AWS::secrets_create exists"
+assert_ok exists &AWS::secrets_put_value, "AWS::secrets_put_value exists"
+assert_ok exists &AWS::secrets_list, "AWS::secrets_list exists"
+
+# ── SNS.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::SNS::topics, "AWS::SNS::topics exists"
+assert_ok exists &AWS::SNS::create, "AWS::SNS::create exists"
+assert_ok exists &AWS::SNS::publish, "AWS::SNS::publish exists"
+assert_ok exists &AWS::SNS::subscribe, "AWS::SNS::subscribe exists"
+
+# ── SSM.stk ──────────────────────────────────────────────
+assert_ok exists &AWS::SSM::get, "AWS::SSM::get exists"
+assert_ok exists &AWS::SSM::put, "AWS::SSM::put exists"
+assert_ok exists &AWS::SSM::by_path, "AWS::SSM::by_path exists"
+assert_ok exists &AWS::SSM::delete, "AWS::SSM::delete exists"
+
+# ── Secrets.stk ──────────────────────────────────────────
+assert_ok exists &AWS::Secrets::get, "AWS::Secrets::get exists"
+assert_ok exists &AWS::Secrets::create, "AWS::Secrets::create exists"
+assert_ok exists &AWS::Secrets::put, "AWS::Secrets::put exists"
+assert_ok exists &AWS::Secrets::list, "AWS::Secrets::list exists"
 
 test_run

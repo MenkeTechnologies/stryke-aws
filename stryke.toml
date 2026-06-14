@@ -1,7 +1,7 @@
 [package]
 name = "stryke-aws"
 version = "0.2.1"
-description = "AWS client (S3, DynamoDB, SQS, Lambda, STS) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region. v0.2.0 focused subset; remaining ops can be added incrementally."
+description = "AWS client (S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter Store, Secrets Manager) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-aws"
@@ -35,6 +35,21 @@ exports = [
     "aws__sqs_purge_queue",
     "aws__sqs_get_queue_attributes",
     "aws__sts_assume_role",
+    "aws__s3_copy_object",
+    "aws__s3_delete_objects",
+    "aws__ddb_update_item",
+    "aws__sns_list_topics",
+    "aws__sns_publish",
+    "aws__sns_create_topic",
+    "aws__sns_subscribe",
+    "aws__ssm_get_parameter",
+    "aws__ssm_put_parameter",
+    "aws__ssm_get_parameters_by_path",
+    "aws__ssm_delete_parameter",
+    "aws__secrets_get_value",
+    "aws__secrets_create",
+    "aws__secrets_put_value",
+    "aws__secrets_list",
 ]
 
 [scripts]

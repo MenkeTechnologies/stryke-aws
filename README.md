@@ -12,11 +12,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![stryke](https://img.shields.io/badge/stryke-package-cyan.svg)](https://github.com/MenkeTechnologies/strykelang)
 
-### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS]`
+### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS + SNS + SSM + SECRETS]`
 
 > *"The cloud, one stryke pipe away."*
 
-AWS client for stryke — S3, DynamoDB, SQS, Lambda, STS. Opt-in package
+AWS client for stryke — S3, DynamoDB, SQS, Lambda, STS, SNS, SSM
+Parameter Store, and Secrets Manager. Opt-in package
 tier, kept out of the stryke core binary so the daily-driver install stays
 slim.
 
@@ -80,8 +81,8 @@ make install
 The cdylib is dlopened in-process on first `use AWS`. A shared tokio
 runtime + `aws_config::SdkConfig` cache per region is held in `OnceCell`
 — no fork-per-call, no full IMDS/SSO/env creds chain on each call. v0.2.1
-covers a focused subset across S3, DynamoDB, SQS, Lambda, STS; the v1
-helper's broader op set can be added incrementally.
+covers S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter Store, and
+Secrets Manager; further ops can be added incrementally.
 
 ## [0x02] Quick start
 
@@ -201,6 +202,41 @@ cdylib.
 ```stryke
 AWS::STS::caller_identity %opts → { account, arn, user_id }
 AWS::STS::assume_role     $role_arn, %opts → \%creds   # opts: session_name; temp credentials
+```
+
+### `use AWS::SNS`
+
+```stryke
+AWS::SNS::topics    %opts → @topic_arns
+AWS::SNS::create    $name, %opts → $topic_arn
+AWS::SNS::publish   $message, %opts → $message_id   # opts: topic_arn | target_arn | phone_number, subject
+AWS::SNS::subscribe $topic_arn, $protocol, $endpoint, %opts → $subscription_arn
+```
+
+### `use AWS::SSM` (Parameter Store)
+
+```stryke
+AWS::SSM::get      $name, %opts → $value             # opts: with_decryption
+AWS::SSM::put      $name, $value, %opts → $version   # opts: type (String|StringList|SecureString), overwrite
+AWS::SSM::by_path  $path, %opts → @{ {name, value} } # opts: recursive, with_decryption
+AWS::SSM::delete   $name, %opts → 1 | 0
+```
+
+### `use AWS::Secrets` (Secrets Manager)
+
+```stryke
+AWS::Secrets::get    $secret_id, %opts → $secret_string
+AWS::Secrets::create $name, $secret_string, %opts → { arn, name }
+AWS::Secrets::put    $secret_id, $secret_string, %opts → $version_id
+AWS::Secrets::list   %opts → @{ {name, arn} }
+```
+
+### Flat extras on `use AWS`
+
+```stryke
+AWS::s3_copy_object    $src_bucket, $src_key, $bucket, $key, %opts → \%resp
+AWS::s3_delete_objects $bucket, \@keys, %opts → @deleted        # batch delete (≤1000)
+AWS::ddb_update_item   $table, \%key, \%updates, %opts → 1 | 0  # SET each attr
 ```
 
 ## [0x04] FFI layer

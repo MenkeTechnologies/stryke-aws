@@ -10,8 +10,8 @@
 ## cdylib holds one shared tokio runtime + an `SdkConfig` cache per
 ## region. Back-to-back calls reuse the same SDK config.
 ##
-## v0.2.0 surface: focused subset across S3, DynamoDB, SQS, Lambda, STS.
-## The v1 helper's broader op set can be added incrementally.
+## Surface across S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter
+## Store, and Secrets Manager. Further ops can be added incrementally.
 
 package AWS
 
@@ -208,5 +208,121 @@ fn AWS::lambda_list_functions (%opts) {
     val $o = AWS::_decode("lambda_list_functions",
         aws__lambda_list_functions(to_json(AWS::_req({}, \%opts))))
     @{ $o->{functions} }
+}
+
+# ── S3 copy + batch delete ──────────────────────────────────────────
+
+## Server-side copy s3://$src_bucket/$src_key to s3://$bucket/$key.
+fn AWS::s3_copy_object ($src_bucket, $src_key, $bucket, $key, %opts) {
+    val $r = AWS::_req(
+        { source_bucket => $src_bucket, source_key => $src_key,
+          bucket => $bucket, key => $key }, \%opts)
+    AWS::_decode("s3_copy_object", aws__s3_copy_object(to_json($r)))
+}
+
+## Batch-delete up to 1000 keys from $bucket. Returns the deleted-keys list.
+fn AWS::s3_delete_objects ($bucket, $keys, %opts) {
+    val $list = ref($keys) eq "ARRAY" ? $keys : [$keys]
+    val $r = AWS::_req({ bucket => $bucket, keys => $list }, \%opts)
+    @{ AWS::_decode("s3_delete_objects", aws__s3_delete_objects(to_json($r)))->{deleted} }
+}
+
+## UpdateItem on $table: set each attr in $updates hashref for the $key item.
+fn AWS::ddb_update_item ($table, $key, $updates, %opts) {
+    die "AWS::ddb_update_item: key must be hashref" unless ref($key) eq "HASH"
+    die "AWS::ddb_update_item: updates must be hashref" unless ref($updates) eq "HASH"
+    val $r = AWS::_req({ table => $table, key => $key, updates => $updates }, \%opts)
+    AWS::_decode("ddb_update_item", aws__ddb_update_item(to_json($r)))->{updated} ? 1 : 0
+}
+
+# ── SNS ─────────────────────────────────────────────────────────────
+
+## List SNS topic ARNs.
+fn AWS::sns_list_topics (%opts) {
+    @{ AWS::_decode("sns_list_topics",
+        aws__sns_list_topics(to_json(AWS::_req({}, \%opts))))->{topics} }
+}
+
+## Publish $message. opts: topic_arn | target_arn | phone_number, subject.
+## Returns the message_id.
+fn AWS::sns_publish ($message, %opts) {
+    val $r = AWS::_req(
+        { message => $message, topic_arn => $opts{topic_arn}, target_arn => $opts{target_arn},
+          phone_number => $opts{phone_number}, subject => $opts{subject} }, \%opts)
+    AWS::_decode("sns_publish", aws__sns_publish(to_json($r)))->{message_id}
+}
+
+## Create (idempotent) a standard topic named $name; returns its ARN.
+fn AWS::sns_create_topic ($name, %opts) {
+    val $r = AWS::_req({ name => $name }, \%opts)
+    AWS::_decode("sns_create_topic", aws__sns_create_topic(to_json($r)))->{topic_arn}
+}
+
+## Subscribe $endpoint to $topic_arn over $protocol (sqs/lambda/email/https/…).
+## Returns the subscription ARN.
+fn AWS::sns_subscribe ($topic_arn, $protocol, $endpoint, %opts) {
+    val $r = AWS::_req(
+        { topic_arn => $topic_arn, protocol => $protocol, endpoint => $endpoint }, \%opts)
+    AWS::_decode("sns_subscribe", aws__sns_subscribe(to_json($r)))->{subscription_arn}
+}
+
+# ── SSM Parameter Store ─────────────────────────────────────────────
+
+## Get a parameter value. opts: with_decryption (for SecureString).
+fn AWS::ssm_get_parameter ($name, %opts) {
+    val $r = AWS::_req(
+        { name => $name, with_decryption => ($opts{with_decryption} ? \1 : \0) }, \%opts)
+    AWS::_decode("ssm_get_parameter", aws__ssm_get_parameter(to_json($r)))->{value}
+}
+
+## Put a parameter. opts: type (String|StringList|SecureString), overwrite.
+## Returns the new version number.
+fn AWS::ssm_put_parameter ($name, $value, %opts) {
+    val $r = AWS::_req(
+        { name => $name, value => $value, type => ($opts{type} // "String"),
+          overwrite => ($opts{overwrite} ? \1 : \0) }, \%opts)
+    AWS::_decode("ssm_put_parameter", aws__ssm_put_parameter(to_json($r)))->{version}
+}
+
+## List parameters under $path. opts: recursive, with_decryption. Returns a
+## list of { name, value } hashrefs.
+fn AWS::ssm_get_parameters_by_path ($path, %opts) {
+    val $r = AWS::_req(
+        { path => $path, recursive => ($opts{recursive} ? \1 : \0),
+          with_decryption => ($opts{with_decryption} ? \1 : \0) }, \%opts)
+    @{ AWS::_decode("ssm_get_parameters_by_path",
+        aws__ssm_get_parameters_by_path(to_json($r)))->{parameters} }
+}
+
+## Delete a parameter by name. Returns 1 on success.
+fn AWS::ssm_delete_parameter ($name, %opts) {
+    val $r = AWS::_req({ name => $name }, \%opts)
+    AWS::_decode("ssm_delete_parameter", aws__ssm_delete_parameter(to_json($r)))->{deleted} ? 1 : 0
+}
+
+# ── Secrets Manager ─────────────────────────────────────────────────
+
+## Get a secret's string value by id (name or ARN).
+fn AWS::secrets_get_value ($secret_id, %opts) {
+    val $r = AWS::_req({ secret_id => $secret_id }, \%opts)
+    AWS::_decode("secrets_get_value", aws__secrets_get_value(to_json($r)))->{secret_string}
+}
+
+## Create a new secret named $name holding $secret_string. Returns { arn, name }.
+fn AWS::secrets_create ($name, $secret_string, %opts) {
+    val $r = AWS::_req({ name => $name, secret_string => $secret_string }, \%opts)
+    AWS::_decode("secrets_create", aws__secrets_create(to_json($r)))
+}
+
+## Store a new version of $secret_id's value. Returns the new version_id.
+fn AWS::secrets_put_value ($secret_id, $secret_string, %opts) {
+    val $r = AWS::_req({ secret_id => $secret_id, secret_string => $secret_string }, \%opts)
+    AWS::_decode("secrets_put_value", aws__secrets_put_value(to_json($r)))->{version_id}
+}
+
+## List secrets as { name, arn } hashrefs.
+fn AWS::secrets_list (%opts) {
+    @{ AWS::_decode("secrets_list",
+        aws__secrets_list(to_json(AWS::_req({}, \%opts))))->{secrets} }
 }
 
