@@ -990,6 +990,103 @@ async fn op_secrets_list(opts: Value) -> Result<Value> {
     Ok(json!({"secrets": secrets}))
 }
 
+// ── SES (email) ───────────────────────────────────────────────────────────────
+
+async fn op_ses_send_email(opts: Value) -> Result<Value> {
+    use aws_sdk_sesv2::types::{Body, Content, Destination, EmailContent, Message};
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sesv2::Client::new(&cfg);
+    let from = opts["from"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing from"))?;
+    let to = string_vec(&opts["to"])?;
+    if to.is_empty() {
+        return Err(anyhow!("to must name at least one recipient"));
+    }
+    let subject = opts["subject"].as_str().unwrap_or("");
+    let body_text = opts["body"].as_str().unwrap_or("");
+    let html = opts["html"].as_bool().unwrap_or(false);
+    let mut dest = Destination::builder();
+    for addr in &to {
+        dest = dest.to_addresses(addr);
+    }
+    let subject_content = Content::builder().data(subject).build()?;
+    let body_content = Content::builder().data(body_text).build()?;
+    let body = if html {
+        Body::builder().html(body_content).build()
+    } else {
+        Body::builder().text(body_content).build()
+    };
+    let message = Message::builder()
+        .subject(subject_content)
+        .body(body)
+        .build();
+    let content = EmailContent::builder().simple(message).build();
+    let r = client
+        .send_email()
+        .from_email_address(from)
+        .destination(dest.build())
+        .content(content)
+        .send()
+        .await?;
+    Ok(json!({"message_id": r.message_id().unwrap_or("")}))
+}
+
+// ── CloudWatch ────────────────────────────────────────────────────────────────
+
+async fn op_cloudwatch_put_metric(opts: Value) -> Result<Value> {
+    use aws_sdk_cloudwatch::types::{MetricDatum, StandardUnit};
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatch::Client::new(&cfg);
+    let namespace = opts["namespace"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing namespace"))?;
+    let name = opts["metric_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing metric_name"))?;
+    let value = opts["value"]
+        .as_f64()
+        .ok_or_else(|| anyhow!("missing value"))?;
+    let mut datum = MetricDatum::builder().metric_name(name).value(value);
+    if let Some(unit) = opts["unit"].as_str() {
+        datum = datum.unit(StandardUnit::from(unit));
+    }
+    client
+        .put_metric_data()
+        .namespace(namespace)
+        .metric_data(datum.build())
+        .send()
+        .await?;
+    Ok(json!({"namespace": namespace, "metric_name": name, "value": value, "ok": true}))
+}
+
+async fn op_cloudwatch_list_metrics(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatch::Client::new(&cfg);
+    let mut req = client.list_metrics();
+    if let Some(ns) = opts["namespace"].as_str() {
+        req = req.namespace(ns);
+    }
+    if let Some(name) = opts["metric_name"].as_str() {
+        req = req.metric_name(name);
+    }
+    let r = req.send().await?;
+    let metrics: Vec<Value> = r
+        .metrics()
+        .iter()
+        .map(|m| {
+            json!({
+                "namespace": m.namespace(),
+                "metric_name": m.metric_name(),
+                "dimensions": m.dimensions().iter()
+                    .map(|d| json!({"name": d.name(), "value": d.value()}))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+    Ok(json!({"metrics": metrics}))
+}
+
 // ── FFI plumbing ────────────────────────────────────────────────────────────
 
 fn ffi_call_async<F, Fut>(args: *const c_char, handler: F) -> *const c_char
@@ -1229,6 +1326,21 @@ pub extern "C" fn aws__secrets_put_value(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__secrets_list(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_secrets_list)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ses_send_email(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ses_send_email)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__cloudwatch_put_metric(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_cloudwatch_put_metric)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__cloudwatch_list_metrics(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_cloudwatch_list_metrics)
 }
 
 #[cfg(test)]

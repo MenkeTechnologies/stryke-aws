@@ -50,6 +50,9 @@ exports = [
     "aws__secrets_create",
     "aws__secrets_put_value",
     "aws__secrets_list",
+    "aws__ses_send_email",
+    "aws__cloudwatch_put_metric",
+    "aws__cloudwatch_list_metrics",
 ]
 
 [scripts]

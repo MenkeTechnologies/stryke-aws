@@ -1,0 +1,17 @@
+## lib/CloudWatch.stk — `use AWS::CloudWatch`
+##
+## Wraps `AWS::cloudwatch_*` from the cdylib.
+
+package AWS::CloudWatch
+
+use AWS
+
+## Publish a metric data point. opts: unit (StandardUnit name).
+fn AWS::CloudWatch::put ($namespace, $metric_name, $value, %opts) {
+    AWS::cloudwatch_put_metric($namespace, $metric_name, $value, %opts)
+}
+
+## List metrics ({ namespace, metric_name, dimensions }). opts: namespace, metric_name.
+fn AWS::CloudWatch::list (%opts) {
+    AWS::cloudwatch_list_metrics(%opts)
+}

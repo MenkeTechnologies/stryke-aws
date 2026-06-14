@@ -12,7 +12,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![stryke](https://img.shields.io/badge/stryke-package-cyan.svg)](https://github.com/MenkeTechnologies/strykelang)
 
-### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS + SNS + SSM + SECRETS]`
+### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS + SNS + SSM + SECRETS + SES + CLOUDWATCH]`
 
 > *"The cloud, one stryke pipe away."*
 
@@ -229,6 +229,19 @@ AWS::Secrets::get    $secret_id, %opts → $secret_string
 AWS::Secrets::create $name, $secret_string, %opts → { arn, name }
 AWS::Secrets::put    $secret_id, $secret_string, %opts → $version_id
 AWS::Secrets::list   %opts → @{ {name, arn} }
+```
+
+### `use AWS::SES` (email, v2)
+
+```stryke
+AWS::SES::send $from, $to_or_aref, %opts → $message_id   # opts: subject, body, html
+```
+
+### `use AWS::CloudWatch`
+
+```stryke
+AWS::CloudWatch::put  $namespace, $metric_name, $value, %opts → 1   # opts: unit
+AWS::CloudWatch::list %opts → @{ {namespace, metric_name, dimensions} }   # opts: namespace, metric_name
 ```
 
 ### Flat extras on `use AWS`

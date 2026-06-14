@@ -1,0 +1,13 @@
+## lib/SES.stk — `use AWS::SES` (Simple Email Service v2)
+##
+## Wraps `AWS::ses_send_email` from the cdylib.
+
+package AWS::SES
+
+use AWS
+
+## Send an email. $to is an address or arrayref. opts: subject, body, html.
+## Returns the message_id.
+fn AWS::SES::send ($from, $to, %opts) {
+    AWS::ses_send_email($from, $to, %opts)
+}

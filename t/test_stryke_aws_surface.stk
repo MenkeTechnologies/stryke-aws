@@ -23,6 +23,8 @@ use AWS::STS
 use AWS::SNS
 use AWS::SSM
 use AWS::Secrets
+use AWS::SES
+use AWS::CloudWatch
 
 # ── AWS.stk ──────────────────────────────────────────────
 assert_ok exists &AWS::version, "AWS::version exists"
@@ -123,5 +125,12 @@ assert_ok exists &AWS::Secrets::get, "AWS::Secrets::get exists"
 assert_ok exists &AWS::Secrets::create, "AWS::Secrets::create exists"
 assert_ok exists &AWS::Secrets::put, "AWS::Secrets::put exists"
 assert_ok exists &AWS::Secrets::list, "AWS::Secrets::list exists"
+
+assert_ok exists &AWS::ses_send_email, "AWS::ses_send_email exists"
+assert_ok exists &AWS::cloudwatch_put_metric, "AWS::cloudwatch_put_metric exists"
+assert_ok exists &AWS::cloudwatch_list_metrics, "AWS::cloudwatch_list_metrics exists"
+assert_ok exists &AWS::SES::send, "AWS::SES::send exists"
+assert_ok exists &AWS::CloudWatch::put, "AWS::CloudWatch::put exists"
+assert_ok exists &AWS::CloudWatch::list, "AWS::CloudWatch::list exists"
 
 test_run

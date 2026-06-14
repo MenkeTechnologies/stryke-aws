@@ -326,3 +326,33 @@ fn AWS::secrets_list (%opts) {
         aws__secrets_list(to_json(AWS::_req({}, \%opts))))->{secrets} }
 }
 
+# ── SES (email) ─────────────────────────────────────────────────────
+
+## Send an email via SES v2. $to is an address or arrayref. opts: subject,
+## body, html (send body as HTML). Returns the message_id.
+fn AWS::ses_send_email ($from, $to, %opts) {
+    val $list = ref($to) eq "ARRAY" ? $to : [$to]
+    val $r = AWS::_req(
+        { from => $from, to => $list, subject => $opts{subject}, body => $opts{body},
+          html => ($opts{html} ? \1 : \0) }, \%opts)
+    AWS::_decode("ses_send_email", aws__ses_send_email(to_json($r)))->{message_id}
+}
+
+# ── CloudWatch ──────────────────────────────────────────────────────
+
+## Publish a single metric data point. opts: unit (StandardUnit name).
+## Returns 1 on success.
+fn AWS::cloudwatch_put_metric ($namespace, $metric_name, $value, %opts) {
+    val $r = AWS::_req(
+        { namespace => $namespace, metric_name => $metric_name, value => $value,
+          unit => $opts{unit} }, \%opts)
+    AWS::_decode("cloudwatch_put_metric", aws__cloudwatch_put_metric(to_json($r)))->{ok} ? 1 : 0
+}
+
+## List metrics ({ namespace, metric_name, dimensions }). opts: namespace,
+## metric_name (filters).
+fn AWS::cloudwatch_list_metrics (%opts) {
+    val $r = AWS::_req({ namespace => $opts{namespace}, metric_name => $opts{metric_name} }, \%opts)
+    @{ AWS::_decode("cloudwatch_list_metrics", aws__cloudwatch_list_metrics(to_json($r)))->{metrics} }
+}
+
