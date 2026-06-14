@@ -133,4 +133,7 @@ assert_ok exists &AWS::SES::send, "AWS::SES::send exists"
 assert_ok exists &AWS::CloudWatch::put, "AWS::CloudWatch::put exists"
 assert_ok exists &AWS::CloudWatch::list, "AWS::CloudWatch::list exists"
 
+assert_ok exists &AWS::ddb_batch_get_item, "AWS::ddb_batch_get_item exists"
+assert_ok exists &AWS::ddb_batch_write_item, "AWS::ddb_batch_write_item exists"
+
 test_run

@@ -250,6 +250,8 @@ AWS::CloudWatch::list %opts → @{ {namespace, metric_name, dimensions} }   # op
 AWS::s3_copy_object    $src_bucket, $src_key, $bucket, $key, %opts → \%resp
 AWS::s3_delete_objects $bucket, \@keys, %opts → @deleted        # batch delete (≤1000)
 AWS::ddb_update_item   $table, \%key, \%updates, %opts → 1 | 0  # SET each attr
+AWS::ddb_batch_get_item   $table, \@keys, %opts → @items       # ≤100 keys
+AWS::ddb_batch_write_item $table, %opts → $count               # opts: puts (≤25), deletes
 ```
 
 ## [0x04] FFI layer

@@ -777,6 +777,98 @@ async fn op_ddb_update_item(opts: Value) -> Result<Value> {
     Ok(json!({"table": table, "updated": true}))
 }
 
+async fn op_ddb_batch_get_item(opts: Value) -> Result<Value> {
+    use aws_sdk_dynamodb::types::KeysAndAttributes;
+    use std::collections::HashMap;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?;
+    let keys = opts["keys"]
+        .as_array()
+        .ok_or_else(|| anyhow!("missing keys (array of key objects)"))?;
+    if keys.is_empty() {
+        return Err(anyhow!("keys must be non-empty"));
+    }
+    let mut kaa = KeysAndAttributes::builder();
+    for key in keys {
+        let obj = key
+            .as_object()
+            .ok_or_else(|| anyhow!("each key must be an object"))?;
+        let m: HashMap<String, _> = obj
+            .iter()
+            .map(|(k, v)| (k.clone(), json_to_av(v)))
+            .collect();
+        kaa = kaa.keys(m);
+    }
+    let r = client
+        .batch_get_item()
+        .request_items(table, kaa.build()?)
+        .send()
+        .await?;
+    let items: Vec<Value> = r
+        .responses()
+        .and_then(|m| m.get(table))
+        .map(|rows| {
+            rows.iter()
+                .map(|item| {
+                    let obj: serde_json::Map<String, Value> = item
+                        .iter()
+                        .map(|(k, av)| (k.clone(), attribute_value_to_json(av)))
+                        .collect();
+                    Value::Object(obj)
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    Ok(json!({ "table": table, "items": items }))
+}
+
+async fn op_ddb_batch_write_item(opts: Value) -> Result<Value> {
+    use aws_sdk_dynamodb::types::{DeleteRequest, PutRequest, WriteRequest};
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?;
+    let mut reqs: Vec<WriteRequest> = Vec::new();
+    if let Some(puts) = opts["puts"].as_array() {
+        for item in puts {
+            let obj = item
+                .as_object()
+                .ok_or_else(|| anyhow!("each put must be an item object"))?;
+            let mut pr = PutRequest::builder();
+            for (k, v) in obj {
+                pr = pr.item(k, json_to_av(v));
+            }
+            reqs.push(WriteRequest::builder().put_request(pr.build()?).build());
+        }
+    }
+    if let Some(dels) = opts["deletes"].as_array() {
+        for key in dels {
+            let obj = key
+                .as_object()
+                .ok_or_else(|| anyhow!("each delete must be a key object"))?;
+            let mut dr = DeleteRequest::builder();
+            for (k, v) in obj {
+                dr = dr.key(k, json_to_av(v));
+            }
+            reqs.push(WriteRequest::builder().delete_request(dr.build()?).build());
+        }
+    }
+    if reqs.is_empty() {
+        return Err(anyhow!("provide puts and/or deletes"));
+    }
+    let n = reqs.len();
+    client
+        .batch_write_item()
+        .request_items(table, reqs)
+        .send()
+        .await?;
+    Ok(json!({ "table": table, "written": n }))
+}
+
 // ── SNS ───────────────────────────────────────────────────────────────────────
 
 async fn op_sns_list_topics(opts: Value) -> Result<Value> {
@@ -1266,6 +1358,16 @@ pub extern "C" fn aws__s3_delete_objects(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__ddb_update_item(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_ddb_update_item)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_batch_get_item(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_batch_get_item)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_batch_write_item(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_batch_write_item)
 }
 
 #[no_mangle]

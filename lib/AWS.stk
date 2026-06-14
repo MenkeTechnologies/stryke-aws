@@ -235,6 +235,22 @@ fn AWS::ddb_update_item ($table, $key, $updates, %opts) {
     AWS::_decode("ddb_update_item", aws__ddb_update_item(to_json($r)))->{updated} ? 1 : 0
 }
 
+## BatchGetItem — fetch up to 100 items from $table by $keys (arrayref of key
+## hashrefs). Returns the found items as a list of hashrefs.
+fn AWS::ddb_batch_get_item ($table, $keys, %opts) {
+    die "AWS::ddb_batch_get_item: keys must be an arrayref of hashrefs" unless ref($keys) eq "ARRAY"
+    val $r = AWS::_req({ table => $table, keys => $keys }, \%opts)
+    @{ AWS::_decode("ddb_batch_get_item", aws__ddb_batch_get_item(to_json($r)))->{items} }
+}
+
+## BatchWriteItem — put and/or delete up to 25 items in $table. opts: puts
+## (arrayref of item hashrefs), deletes (arrayref of key hashrefs). Returns the
+## count of write requests submitted.
+fn AWS::ddb_batch_write_item ($table, %opts) {
+    val $r = AWS::_req({ table => $table, puts => $opts{puts}, deletes => $opts{deletes} }, \%opts)
+    AWS::_decode("ddb_batch_write_item", aws__ddb_batch_write_item(to_json($r)))->{written}
+}
+
 # ── SNS ─────────────────────────────────────────────────────────────
 
 ## List SNS topic ARNs.

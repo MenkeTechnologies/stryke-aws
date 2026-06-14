@@ -38,6 +38,8 @@ exports = [
     "aws__s3_copy_object",
     "aws__s3_delete_objects",
     "aws__ddb_update_item",
+    "aws__ddb_batch_get_item",
+    "aws__ddb_batch_write_item",
     "aws__sns_list_topics",
     "aws__sns_publish",
     "aws__sns_create_topic",
