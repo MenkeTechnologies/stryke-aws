@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark light">
-  <meta name="description" content="stryke-aws — AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS. AWS client for stryke — S3, DynamoDB, SQS, Lambda, STS. Opt-in package, kept out of the stryke core binary so the daily-driver install stays slim. Five SDKs together produce a ~12 MB helper binary — way too much to bake into stryke core.">
+  <meta name="description" content="stryke-aws — AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS. AWS client for stryke — S3, DynamoDB, SQS, Lambda, STS. Opt-in package, kept out of the stryke core binary so the daily-driver install stays slim. Five SDKs together are too much to bake into stryke core, so they ship as a Rust cdylib that stryke dlopens in-process on first `use AWS`.">
   <title>stryke-aws — Documentation</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -86,7 +86,7 @@
             <span class="sep">/</span>
             <a href="https://github.com/MenkeTechnologies/MenkeTechnologiesMeta" target="_blank" rel="noopener noreferrer">Meta</a>
           </nav>
-          <p class="docs-build-line">stryke package · CLI launcher <code>aws</code> · Rust helper <code>stryke-aws-helper</code> · opt-in (kept out of stryke core)</p>
+          <p class="docs-build-line">stryke package · cdylib <code>libstryke_aws.{dylib,so}</code> · dlopen'd in-process on <code>use AWS</code> · opt-in (kept out of stryke core)</p>
         </div>
         <div class="tutorial-toolbar">
           <button type="button" class="btn btn-secondary" id="btnTheme" title="Toggle light/dark">Theme</button>
@@ -108,59 +108,58 @@
 
     <main class="tutorial-main">
       <h2 class="tutorial-title"><span class="step-hash">&gt;_</span>STRYKE-AWS</h2>
-      <p class="tutorial-subtitle"><strong>The cloud, one stryke pipe away.</strong> AWS client for stryke &mdash; S3, DynamoDB, SQS, Lambda, STS. Opt-in package, kept out of the stryke core binary so the daily-driver install stays slim. Five SDKs together produce a ~12 MB helper binary &mdash; way too much to bake into stryke core.</p>
+      <p class="tutorial-subtitle"><strong>The cloud, one <code>use AWS</code> away.</strong> AWS client for stryke &mdash; S3, DynamoDB, SQS, Lambda, STS. Opt-in package, kept out of the stryke core binary so the daily-driver install stays slim. Five SDKs together are too much to bake into stryke core, so they ship as a Rust cdylib that stryke <code>dlopen</code>s in-process on first <code>use AWS</code>.</p>
 
       <section class="tutorial-section">
         <h2>Install</h2>
-<pre># build the helper binary, install as a stryke package
+<pre># from a release (no rustc on the consumer machine)
+s pkg install -g github.com/MenkeTechnologies/stryke-aws
+
+# from a local checkout
 cd ~/projects/stryke-aws
-cargo build --release
-s pkg install -g .
+cargo build --release            # produces target/release/libstryke_aws.{dylib,so}
+s pkg install -g .               # cdylib lands in ~/.stryke/store/aws@&lt;version&gt;/
 
 # one-liner
-make install
-
-# verify
-aws --help</pre>
-        <p>After install, <code>aws --help</code> works from anywhere on PATH (assuming <code>~/.stryke/bin/</code> is on PATH). The stryke library is auto-discoverable to any project that depends on the package via <code>[deps] aws = { path = "..." }</code> or, when published, by name.</p>
+make install</pre>
+        <p>The cdylib is dlopened in-process on first <code>use AWS</code> &mdash; no helper-binary fork per call. Any stryke script that declares <code>use AWS</code> (or a submodule like <code>use AWS::S3</code>) resolves the package automatically.</p>
       </section>
 
       <section class="tutorial-section">
-        <h2>CLI: <code>aws</code></h2>
+        <h2>Quick start: <code>use AWS</code></h2>
         <table class="example-tbl">
           <tbody>
-            <tr><td>list S3 buckets</td><td><code>aws s3 ls</code></td></tr>
-            <tr><td>upload a file</td><td><code>aws s3 cp ./report.csv s3://my-bucket/reports/</code></td></tr>
-            <tr><td>query DynamoDB</td><td><code>aws dynamodb scan --table-name Users</code></td></tr>
-            <tr><td>send SQS message</td><td><code>aws sqs send --queue events --body '{"hello":"world"}'</code></td></tr>
-            <tr><td>invoke Lambda + capture</td><td><code>aws lambda invoke my-fn --payload '{}' | jq .</code></td></tr>
-            <tr><td>LocalStack endpoint override</td><td><code>AWS_ENDPOINT_URL=http://localhost:4566 aws s3 ls</code></td></tr>
+            <tr><td>identity check</td><td><code>p to_json AWS::STS::caller_identity()</code></td></tr>
+            <tr><td>list S3 keys</td><td><code>my @keys = AWS::S3::ls "s3://my-bucket/prefix/", delimiter =&gt; "/"</code></td></tr>
+            <tr><td>put an object</td><td><code>AWS::S3::put "s3://my-bucket/hello.txt", data =&gt; "hi"</code></td></tr>
+            <tr><td>DynamoDB item</td><td><code>AWS::Dynamo::put "users", { id =&gt; "u-42", name =&gt; "alice" }</code></td></tr>
+            <tr><td>send SQS message</td><td><code>AWS::SQS::send $queue_url, "payload"</code></td></tr>
+            <tr><td>invoke Lambda + capture</td><td><code>my $reply = AWS::Lambda::call "my-fn", { hello =&gt; "world" }</code></td></tr>
+            <tr><td>LocalStack endpoint override</td><td><code>AWS::S3::ls "s3://...", endpoint =&gt; "http://localhost:4566"</code></td></tr>
           </tbody>
         </table>
-        <p>The full flag matrix lives in the <a href="https://github.com/MenkeTechnologies/stryke-aws#0x03-cli-aws">README "CLI" section</a>.</p>
+        <p>The full API lives in the <a href="https://github.com/MenkeTechnologies/stryke-aws#0x03-api-reference">README "API reference" section</a>.</p>
       </section>
 
       <section class="tutorial-section">
         <h2>Why a package, not a builtin</h2>
         <p>The official <code>aws-sdk-rust</code> crates pull in tokio, hyper, rustls, and a fat chain of smithy / signing / endpoint-resolution support code. Ships once as an opt-in package.</p>
-        <p>The stryke side is a thin NDJSON-pipe wrapper; the heavy code lives in the <code>stryke-aws-helper</code> sidecar binary and is loaded on demand. Core stryke is never linked against this package's deps.</p>
+        <p>The stryke side is a thin <code>.stk</code> wrapper that calls <code>aws__*</code> FFI symbols on the cdylib; the heavy code lives in <code>libstryke_aws.{dylib,so}</code>, dlopened in-process on first <code>use AWS</code>. Core stryke is never linked against this package's deps.</p>
       </section>
 
       <section class="tutorial-section">
-        <h2>Helper protocol</h2>
-        <p>The <code>stryke-aws-helper</code> sidecar speaks newline-delimited JSON over stdin/stdout. The stryke library shells out per call and pipes structured data both ways. This keeps stryke startup small while making the package's surface area available on demand.</p>
-<pre># manual invocation (debugging only)
-echo '{"op":"version"}' | stryke-aws-helper</pre>
+        <h2>FFI layer</h2>
+        <p>Each <code>AWS::*</code> wrapper builds a JSON args dict and calls a sibling <code>aws__*</code> symbol resolved out of <code>libstryke_aws.{dylib,so}</code>. The cdylib is dlopened in-process on first <code>use AWS</code>; a shared tokio runtime + a per-region <code>SdkConfig</code> cache is held in <code>OnceCell</code> &mdash; no fork-per-call, no full IMDS/SSO/env creds chain on each call. Responses are JSON; errors come back as <code>{"error": "&lt;msg&gt;"}</code> and the wrapper <code>die</code>s with the message.</p>
       </section>
 
       <section class="tutorial-section">
         <h2>Layout</h2>
 <pre>stryke-aws/
-&#9500;&#9472;&#9472; Cargo.toml             # bin = stryke-aws-helper (publish = false)
+&#9500;&#9472;&#9472; Cargo.toml             # cdylib crate manifest (crate-type = ["cdylib"], publish = false)
 &#9500;&#9472;&#9472; src/
-&#9474;   &#9492;&#9472;&#9472; main.rs           # helper binary entry point
-&#9500;&#9472;&#9472; lib/                   # stryke .stk wrapper(s)
-&#9500;&#9472;&#9472; stryke.toml            # stryke package manifest
+&#9474;   &#9492;&#9472;&#9472; lib.rs            # cdylib — aws__* extern "C" exports
+&#9500;&#9472;&#9472; lib/                   # stryke .stk wrapper(s) — `use AWS`, `use AWS::S3`, …
+&#9500;&#9472;&#9472; stryke.toml            # stryke package manifest ([ffi] exports table)
 &#9500;&#9472;&#9472; t/                     # zunit-style tests
 &#9500;&#9472;&#9472; examples/              # runnable .stk examples
 &#9500;&#9472;&#9472; Makefile               # `make install` builds + installs
