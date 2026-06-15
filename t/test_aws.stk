@@ -108,6 +108,13 @@ assert_eq AWS::build_s3_uri("my-bucket", "path/to/obj.txt"), "s3://my-bucket/pat
 assert_eq AWS::build_s3_uri("my-bucket"), "s3://my-bucket", "build_s3_uri: bare bucket when key omitted"
 assert_eq AWS::build_s3_uri("my-bucket", "/leading"), "s3://my-bucket/leading", "build_s3_uri: trims leading slash on key"
 
+# s3_uri_to_arn: s3:// URI → S3 ARN.
+val $oarn = AWS::s3_uri_to_arn("s3://my-bucket/path/to/obj.txt")
+assert_eq $oarn->{arn}, "arn:aws:s3:::my-bucket/path/to/obj.txt", "s3_uri_to_arn: object ARN"
+assert_eq $oarn->{key}, "path/to/obj.txt",                        "s3_uri_to_arn: key extracted"
+assert_eq AWS::s3_uri_to_arn("s3://my-bucket")->{arn}, "arn:aws:s3:::my-bucket", "s3_uri_to_arn: bucket ARN"
+assert_eq AWS::s3_uri_to_arn("s3://b/k", "aws-cn")->{arn}, "arn:aws-cn:s3:::b/k", "s3_uri_to_arn: partition override"
+
 assert_ok AWS::valid_bucket_name("my-logs.2025")->{valid}, "valid_bucket_name: legal"
 val $ip = AWS::valid_bucket_name("192.168.0.1")
 assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"

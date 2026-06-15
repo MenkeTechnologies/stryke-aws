@@ -1329,6 +1329,42 @@ fn op_build_s3_uri(opts: Value) -> Result<Value> {
     Ok(json!({"uri": uri}))
 }
 
+/// Convert an `s3://bucket/key` URI to its S3 ARN `arn:partition:s3:::bucket[/key]`.
+/// S3 bucket/object ARNs carry no region or account, so those segments stay
+/// empty. opts: uri (required), partition (default `aws`; e.g. `aws-cn`,
+/// `aws-us-gov`). Returns `{arn, bucket, key}`. Pure.
+fn op_s3_uri_to_arn(opts: Value) -> Result<Value> {
+    let uri = opts
+        .get("uri")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing uri"))?;
+    let rest = uri
+        .strip_prefix("s3://")
+        .ok_or_else(|| anyhow!("not an s3:// URI: {uri}"))?;
+    let (bucket, key) = match rest.split_once('/') {
+        Some((b, k)) if !k.is_empty() => (b, Some(k)),
+        Some((b, _)) => (b, None),
+        None => (rest, None),
+    };
+    if bucket.is_empty() {
+        return Err(anyhow!("s3 URI missing bucket: {uri}"));
+    }
+    let partition = opts
+        .get("partition")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("aws");
+    let resource = match key {
+        Some(k) => format!("{bucket}/{k}"),
+        None => bucket.to_string(),
+    };
+    Ok(json!({
+        "arn": format!("arn:{partition}:s3:::{resource}"),
+        "bucket": bucket,
+        "key": key.map(|k| json!(k)).unwrap_or(Value::Null),
+    }))
+}
+
 /// Validate an S3 bucket name against AWS's documented rules: 3–63 chars of
 /// `[a-z0-9.-]`, start/end alphanumeric, no `..`, not an IPv4 literal, no
 /// `xn--` prefix, no `-s3alias` suffix. Returns `{valid, reason}`. Pure.
@@ -1603,6 +1639,11 @@ pub extern "C" fn aws__parse_s3_uri(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__build_s3_uri(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_build_s3_uri(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_uri_to_arn(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_s3_uri_to_arn(opts) })
 }
 
 #[no_mangle]
@@ -2183,6 +2224,33 @@ mod ffi_tests {
             json!("s3://b/leading")
         );
         assert!(op_build_s3_uri(json!({"bucket": ""})).is_err());
+    }
+
+    #[test]
+    fn s3_uri_to_arn_maps_uri_to_object_and_bucket_arns() {
+        // Object URI → object ARN (region/account empty for S3).
+        let obj = op_s3_uri_to_arn(json!({"uri": "s3://my-bucket/path/to/object.txt"})).unwrap();
+        assert_eq!(
+            obj["arn"],
+            json!("arn:aws:s3:::my-bucket/path/to/object.txt")
+        );
+        assert_eq!(obj["bucket"], json!("my-bucket"));
+        assert_eq!(obj["key"], json!("path/to/object.txt"));
+        // Bare bucket URI → bucket ARN, null key.
+        let buck = op_s3_uri_to_arn(json!({"uri": "s3://my-bucket"})).unwrap();
+        assert_eq!(buck["arn"], json!("arn:aws:s3:::my-bucket"));
+        assert_eq!(buck["key"], Value::Null);
+        // Trailing slash with no key is still a bucket ARN.
+        assert_eq!(
+            op_s3_uri_to_arn(json!({"uri": "s3://b/"})).unwrap()["arn"],
+            json!("arn:aws:s3:::b")
+        );
+        // China partition.
+        assert_eq!(
+            op_s3_uri_to_arn(json!({"uri": "s3://b/k", "partition": "aws-cn"})).unwrap()["arn"],
+            json!("arn:aws-cn:s3:::b/k")
+        );
+        assert!(op_s3_uri_to_arn(json!({"uri": "http://x/y"})).is_err());
     }
 
     #[test]

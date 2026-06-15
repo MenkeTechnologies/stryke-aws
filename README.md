@@ -261,6 +261,7 @@ AWS::parse_arn($arn)         → { partition, service, region, account_id, resou
 AWS::build_arn(%opts)        → $arn        # parts → ARN; inverse of parse_arn
 AWS::parse_s3_uri($uri)      → { bucket, key }
 AWS::build_s3_uri($b, $k?)   → $uri        # bucket+key → s3:// URI; inverse of parse_s3_uri
+AWS::s3_uri_to_arn($uri, $partition?) → { arn, bucket, key }   # s3://b/k → arn:aws:s3:::b/k
 AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
 ```
 
