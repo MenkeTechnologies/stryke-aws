@@ -103,6 +103,11 @@ assert_eq $s3->{bucket}, "my-bucket",        "parse_s3_uri: bucket"
 assert_eq $s3->{key},    "path/to/obj.txt",  "parse_s3_uri: key"
 assert_ok !defined(AWS::parse_s3_uri("s3://only-bucket")->{key}), "parse_s3_uri: bucket-only key undef"
 
+# build_s3_uri: inverse of parse_s3_uri; bare bucket when key omitted.
+assert_eq AWS::build_s3_uri("my-bucket", "path/to/obj.txt"), "s3://my-bucket/path/to/obj.txt", "build_s3_uri: bucket+key"
+assert_eq AWS::build_s3_uri("my-bucket"), "s3://my-bucket", "build_s3_uri: bare bucket when key omitted"
+assert_eq AWS::build_s3_uri("my-bucket", "/leading"), "s3://my-bucket/leading", "build_s3_uri: trims leading slash on key"
+
 assert_ok AWS::valid_bucket_name("my-logs.2025")->{valid}, "valid_bucket_name: legal"
 val $ip = AWS::valid_bucket_name("192.168.0.1")
 assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"

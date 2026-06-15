@@ -260,6 +260,7 @@ AWS::ddb_batch_write_item $table, %opts → $count               # opts: puts (�
 AWS::parse_arn($arn)         → { partition, service, region, account_id, resource, resource_type, resource_id }
 AWS::build_arn(%opts)        → $arn        # parts → ARN; inverse of parse_arn
 AWS::parse_s3_uri($uri)      → { bucket, key }
+AWS::build_s3_uri($b, $k?)   → $uri        # bucket+key → s3:// URI; inverse of parse_s3_uri
 AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
 ```
 

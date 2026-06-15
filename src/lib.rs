@@ -1305,6 +1305,30 @@ fn op_parse_s3_uri(opts: Value) -> Result<Value> {
     Ok(json!({"bucket": bucket, "key": key}))
 }
 
+/// Build an `s3://bucket/key` URI from parts. opts: bucket (required), key
+/// (optional — omitted yields the bare `s3://bucket`). Leading slashes on the
+/// key are trimmed so callers can pass either `key` or `/key`. Inverse of
+/// `parse_s3_uri`. Pure.
+fn op_build_s3_uri(opts: Value) -> Result<Value> {
+    let bucket = opts
+        .get("bucket")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing bucket"))?;
+    if bucket.is_empty() {
+        return Err(anyhow!("bucket must not be empty"));
+    }
+    let key = opts
+        .get("key")
+        .and_then(Value::as_str)
+        .map(|k| k.trim_start_matches('/'))
+        .filter(|k| !k.is_empty());
+    let uri = match key {
+        Some(k) => format!("s3://{bucket}/{k}"),
+        None => format!("s3://{bucket}"),
+    };
+    Ok(json!({"uri": uri}))
+}
+
 /// Validate an S3 bucket name against AWS's documented rules: 3–63 chars of
 /// `[a-z0-9.-]`, start/end alphanumeric, no `..`, not an IPv4 literal, no
 /// `xn--` prefix, no `-s3alias` suffix. Returns `{valid, reason}`. Pure.
@@ -1574,6 +1598,11 @@ pub extern "C" fn aws__build_arn(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__parse_s3_uri(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_parse_s3_uri(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__build_s3_uri(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_build_s3_uri(opts) })
 }
 
 #[no_mangle]
@@ -2129,6 +2158,31 @@ mod ffi_tests {
         let bucket_only = op_parse_s3_uri(json!({"uri": "s3://my-bucket"})).unwrap();
         assert_eq!(bucket_only["key"], Value::Null);
         assert!(op_parse_s3_uri(json!({"uri": "http://x/y"})).is_err());
+    }
+
+    #[test]
+    fn build_s3_uri_round_trips_through_parse() {
+        let built = op_build_s3_uri(json!({"bucket": "my-bucket", "key": "path/to/object.txt"}))
+            .unwrap()["uri"]
+            .clone();
+        assert_eq!(built, json!("s3://my-bucket/path/to/object.txt"));
+        let back = op_parse_s3_uri(json!({"uri": built})).unwrap();
+        assert_eq!(back["bucket"], json!("my-bucket"));
+        assert_eq!(back["key"], json!("path/to/object.txt"));
+        // Bare bucket when key omitted or empty; leading slash on key trimmed.
+        assert_eq!(
+            op_build_s3_uri(json!({"bucket": "b"})).unwrap()["uri"],
+            json!("s3://b")
+        );
+        assert_eq!(
+            op_build_s3_uri(json!({"bucket": "b", "key": ""})).unwrap()["uri"],
+            json!("s3://b")
+        );
+        assert_eq!(
+            op_build_s3_uri(json!({"bucket": "b", "key": "/leading"})).unwrap()["uri"],
+            json!("s3://b/leading")
+        );
+        assert!(op_build_s3_uri(json!({"bucket": ""})).is_err());
     }
 
     #[test]

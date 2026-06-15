@@ -136,4 +136,11 @@ assert_ok exists &AWS::CloudWatch::list, "AWS::CloudWatch::list exists"
 assert_ok exists &AWS::ddb_batch_get_item, "AWS::ddb_batch_get_item exists"
 assert_ok exists &AWS::ddb_batch_write_item, "AWS::ddb_batch_write_item exists"
 
+# ── pure parse/build helpers ──
+assert_ok exists &AWS::parse_arn, "AWS::parse_arn exists"
+assert_ok exists &AWS::build_arn, "AWS::build_arn exists"
+assert_ok exists &AWS::parse_s3_uri, "AWS::parse_s3_uri exists"
+assert_ok exists &AWS::build_s3_uri, "AWS::build_s3_uri exists"
+assert_ok exists &AWS::valid_bucket_name, "AWS::valid_bucket_name exists"
+
 test_run
