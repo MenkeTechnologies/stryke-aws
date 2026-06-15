@@ -416,6 +416,13 @@ fn AWS::s3_uri_to_arn ($uri, $partition = undef) {
         aws__s3_uri_to_arn(to_json({ uri => $uri, partition => $partition })))
 }
 
+## Convert an S3 ARN "arn:PARTITION:s3:::bucket/key" back to its "s3://bucket/key"
+## URI (region/account must be empty). Inverse of s3_uri_to_arn. Returns a
+## hashref { uri, bucket, key }.
+fn AWS::arn_to_s3_uri ($arn) {
+    AWS::_decode("arn_to_s3_uri", aws__arn_to_s3_uri(to_json({ arn => $arn })))
+}
+
 ## Validate an S3 bucket name against AWS's rules. Returns { name, valid,
 ## reason } (reason undef when valid).
 fn AWS::valid_bucket_name ($name) {

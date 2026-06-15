@@ -115,6 +115,14 @@ assert_eq $oarn->{key}, "path/to/obj.txt",                        "s3_uri_to_arn
 assert_eq AWS::s3_uri_to_arn("s3://my-bucket")->{arn}, "arn:aws:s3:::my-bucket", "s3_uri_to_arn: bucket ARN"
 assert_eq AWS::s3_uri_to_arn("s3://b/k", "aws-cn")->{arn}, "arn:aws-cn:s3:::b/k", "s3_uri_to_arn: partition override"
 
+# arn_to_s3_uri: S3 ARN → s3:// URI (inverse of s3_uri_to_arn).
+val $u = AWS::arn_to_s3_uri("arn:aws:s3:::my-bucket/path/to/obj.txt")
+assert_eq $u->{uri}, "s3://my-bucket/path/to/obj.txt", "arn_to_s3_uri: object URI"
+assert_eq $u->{key}, "path/to/obj.txt",                "arn_to_s3_uri: key extracted"
+assert_eq AWS::arn_to_s3_uri("arn:aws-cn:s3:::b")->{uri}, "s3://b", "arn_to_s3_uri: bare bucket, any partition"
+assert_eq AWS::arn_to_s3_uri(AWS::s3_uri_to_arn("s3://b/k")->{arn})->{uri}, "s3://b/k", "arn_to_s3_uri: round-trips s3_uri_to_arn"
+assert_dies fn { AWS::arn_to_s3_uri("arn:aws:s3:us-east-1:123:bucket/k") }, "arn_to_s3_uri: rejects region/account-bearing ARN"
+
 assert_ok AWS::valid_bucket_name("my-logs.2025")->{valid}, "valid_bucket_name: legal"
 val $ip = AWS::valid_bucket_name("192.168.0.1")
 assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"
