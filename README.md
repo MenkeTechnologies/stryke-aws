@@ -264,6 +264,7 @@ AWS::build_s3_uri($b, $k?)   → $uri        # bucket+key → s3:// URI; inverse
 AWS::s3_uri_to_arn($uri, $partition?) → { arn, bucket, key }   # s3://b/k → arn:aws:s3:::b/k
 AWS::arn_to_s3_uri($arn)     → { uri, bucket, key }   # arn:aws:s3:::b/k → s3://b/k; inverse of s3_uri_to_arn
 AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
+AWS::partition_for_region($r) → { region, partition }   # cn-*→aws-cn, us-gov-*→aws-us-gov, us-iso(b)-*→aws-iso(-b), else aws
 ```
 
 These open no client — pure string parsing/validation, so they run with no

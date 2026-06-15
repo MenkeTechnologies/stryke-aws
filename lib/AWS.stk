@@ -429,3 +429,10 @@ fn AWS::valid_bucket_name ($name) {
     AWS::_decode("valid_bucket_name", aws__valid_bucket_name(to_json({ name => $name })))
 }
 
+## Resolve the ARN partition for an AWS region: cn-* → aws-cn, us-gov-* →
+## aws-us-gov, us-isob-* → aws-iso-b, us-iso-* → aws-iso, else aws. Returns a
+## hashref { region, partition }. Feed the partition into build_arn.
+fn AWS::partition_for_region ($region) {
+    AWS::_decode("partition_for_region", aws__partition_for_region(to_json({ region => $region })))
+}
+

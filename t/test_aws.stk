@@ -128,4 +128,11 @@ val $ip = AWS::valid_bucket_name("192.168.0.1")
 assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"
 assert_match qr/IP address/, $ip->{reason}, "valid_bucket_name: reason names the rule"
 
+# partition_for_region: region → ARN partition.
+assert_eq AWS::partition_for_region("us-east-1")->{partition},    "aws",        "partition_for_region: standard region"
+assert_eq AWS::partition_for_region("cn-north-1")->{partition},   "aws-cn",     "partition_for_region: China"
+assert_eq AWS::partition_for_region("us-gov-west-1")->{partition},"aws-us-gov", "partition_for_region: GovCloud"
+assert_eq AWS::partition_for_region("us-iso-east-1")->{partition},"aws-iso",    "partition_for_region: ISO (Secret)"
+assert_eq AWS::partition_for_region("us-isob-east-1")->{partition},"aws-iso-b", "partition_for_region: ISO-B (Top Secret) beats us-iso- prefix"
+
 test_run

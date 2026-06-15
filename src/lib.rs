@@ -1436,6 +1436,32 @@ fn op_valid_bucket_name(opts: Value) -> Result<Value> {
     Ok(json!({"name": name, "valid": reason.is_none(), "reason": reason}))
 }
 
+/// Resolve the ARN partition for an AWS region. AWS groups regions into five
+/// partitions: `aws-cn` (`cn-*`), `aws-us-gov` (`us-gov-*`), `aws-iso-b`
+/// (`us-isob-*`, Top Secret), `aws-iso` (`us-iso-*`, Secret), and `aws` for
+/// everything else. The `us-isob-` prefix is tested before `us-iso-` so the Top
+/// Secret regions don't fall into the Secret partition. ARN building needs the
+/// right partition. opts: `region` (required). Returns `{region, partition}`.
+/// Pure.
+fn op_partition_for_region(opts: Value) -> Result<Value> {
+    let region = opts
+        .get("region")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing region"))?;
+    let partition = if region.starts_with("cn-") {
+        "aws-cn"
+    } else if region.starts_with("us-gov-") {
+        "aws-us-gov"
+    } else if region.starts_with("us-isob-") {
+        "aws-iso-b"
+    } else if region.starts_with("us-iso-") {
+        "aws-iso"
+    } else {
+        "aws"
+    };
+    Ok(json!({"region": region, "partition": partition}))
+}
+
 // ── exports ─────────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1693,6 +1719,11 @@ pub extern "C" fn aws__arn_to_s3_uri(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_valid_bucket_name(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__partition_for_region(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_partition_for_region(opts) })
 }
 
 #[cfg(test)]
@@ -2349,5 +2380,32 @@ mod ffi_tests {
                 v["reason"]
             );
         }
+    }
+
+    #[test]
+    fn partition_for_region_resolves_all_five_partitions() {
+        for (region, partition) in [
+            ("us-east-1", "aws"),
+            ("eu-west-3", "aws"),
+            ("ap-southeast-2", "aws"),
+            ("cn-north-1", "aws-cn"),
+            ("cn-northwest-1", "aws-cn"),
+            ("us-gov-west-1", "aws-us-gov"),
+            ("us-gov-east-1", "aws-us-gov"),
+            ("us-iso-east-1", "aws-iso"),
+            ("us-isob-east-1", "aws-iso-b"),
+        ] {
+            assert_eq!(
+                op_partition_for_region(json!({ "region": region })).unwrap()["partition"],
+                json!(partition),
+                "{region} → {partition}"
+            );
+        }
+        // The us-isob- prefix must win over us-iso- (Top Secret, not Secret).
+        assert_ne!(
+            op_partition_for_region(json!({"region": "us-isob-east-1"})).unwrap()["partition"],
+            json!("aws-iso")
+        );
+        assert!(op_partition_for_region(json!({})).is_err());
     }
 }
