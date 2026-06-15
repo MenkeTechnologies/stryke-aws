@@ -84,4 +84,28 @@ if ($have_creds) {
     }
 }
 
+# ── pure helpers (no AWS — always run) ───────────────────────────────
+val $arn = AWS::parse_arn("arn:aws:iam::123456789012:role/Admin")
+assert_eq $arn->{service},       "iam",          "parse_arn: service"
+assert_eq $arn->{account_id},    "123456789012", "parse_arn: account"
+assert_eq $arn->{resource_type}, "role",         "parse_arn: resource_type"
+assert_eq $arn->{resource_id},   "Admin",        "parse_arn: resource_id"
+assert_ok !defined($arn->{region}),              "parse_arn: empty region is undef"
+
+val $lambda = AWS::parse_arn("arn:aws:lambda:us-east-1:123456789012:function:my-fn")
+assert_eq $lambda->{resource_type}, "function", "parse_arn: colon resource form"
+assert_eq $lambda->{resource_id},   "my-fn",    "parse_arn: colon resource id"
+
+assert_eq AWS::build_arn(service => "s3", resource => "my-bucket"), "arn:aws:s3:::my-bucket", "build_arn: minimal"
+
+val $s3 = AWS::parse_s3_uri("s3://my-bucket/path/to/obj.txt")
+assert_eq $s3->{bucket}, "my-bucket",        "parse_s3_uri: bucket"
+assert_eq $s3->{key},    "path/to/obj.txt",  "parse_s3_uri: key"
+assert_ok !defined(AWS::parse_s3_uri("s3://only-bucket")->{key}), "parse_s3_uri: bucket-only key undef"
+
+assert_ok AWS::valid_bucket_name("my-logs.2025")->{valid}, "valid_bucket_name: legal"
+val $ip = AWS::valid_bucket_name("192.168.0.1")
+assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"
+assert_match qr/IP address/, $ip->{reason}, "valid_bucket_name: reason names the rule"
+
 test_run

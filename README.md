@@ -254,6 +254,18 @@ AWS::ddb_batch_get_item   $table, \@keys, %opts → @items       # ≤100 keys
 AWS::ddb_batch_write_item $table, %opts → $count               # opts: puts (≤25), deletes
 ```
 
+### Pure helpers (no AWS)
+
+```stryke
+AWS::parse_arn($arn)         → { partition, service, region, account_id, resource, resource_type, resource_id }
+AWS::build_arn(%opts)        → $arn        # parts → ARN; inverse of parse_arn
+AWS::parse_s3_uri($uri)      → { bucket, key }
+AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
+```
+
+These open no client — pure string parsing/validation, so they run with no
+credentials.
+
 ## [0x04] FFI layer
 
 Each `AWS::*` wrapper builds a JSON args dict and calls a sibling

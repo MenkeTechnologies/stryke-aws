@@ -1221,6 +1221,122 @@ pub unsafe extern "C" fn stryke_free_cstring(p: *mut c_char) {
     drop(CString::from_raw(p));
 }
 
+// ── pure helpers (no AWS) ────────────────────────────────────────────────────
+
+/// Parse an ARN `arn:partition:service:region:account-id:resource` into its
+/// fields. Everything after the 5th colon is the resource, further split into
+/// `resource_type` + `resource_id` on the first `/` or `:`. Pure.
+fn op_parse_arn(opts: Value) -> Result<Value> {
+    let arn = opts
+        .get("arn")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing arn"))?;
+    let parts: Vec<&str> = arn.splitn(6, ':').collect();
+    if parts.len() < 6 || parts[0] != "arn" {
+        return Err(anyhow!(
+            "not an ARN (want arn:partition:service:region:account:resource): {arn}"
+        ));
+    }
+    let (partition, service, region, account, resource) =
+        (parts[1], parts[2], parts[3], parts[4], parts[5]);
+    let (resource_type, resource_id): (Option<&str>, &str) =
+        if let Some((t, id)) = resource.split_once('/') {
+            (Some(t), id)
+        } else if let Some((t, id)) = resource.split_once(':') {
+            (Some(t), id)
+        } else {
+            (None, resource)
+        };
+    let or_null = |s: &str| {
+        if s.is_empty() {
+            Value::Null
+        } else {
+            json!(s)
+        }
+    };
+    Ok(json!({
+        "partition": partition,
+        "service": service,
+        "region": or_null(region),
+        "account_id": or_null(account),
+        "resource": resource,
+        "resource_type": resource_type,
+        "resource_id": resource_id,
+    }))
+}
+
+/// Build an ARN from parts. opts: partition (default `aws`), service, region,
+/// account_id, resource (service + resource required). Inverse of `parse_arn`.
+fn op_build_arn(opts: Value) -> Result<Value> {
+    let partition = opts
+        .get("partition")
+        .and_then(Value::as_str)
+        .unwrap_or("aws");
+    let service = opts
+        .get("service")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing service"))?;
+    let region = opts.get("region").and_then(Value::as_str).unwrap_or("");
+    let account = opts.get("account_id").and_then(Value::as_str).unwrap_or("");
+    let resource = opts
+        .get("resource")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing resource"))?;
+    Ok(json!({"arn": format!("arn:{partition}:{service}:{region}:{account}:{resource}")}))
+}
+
+/// Parse an `s3://bucket/key` URI into `{bucket, key}` (key is null when the
+/// URI is just a bucket). Pure.
+fn op_parse_s3_uri(opts: Value) -> Result<Value> {
+    let uri = opts
+        .get("uri")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing uri"))?;
+    let rest = uri
+        .strip_prefix("s3://")
+        .ok_or_else(|| anyhow!("not an s3:// URI: {uri}"))?;
+    let (bucket, key) = match rest.split_once('/') {
+        Some((b, k)) => (b, json!(k)),
+        None => (rest, Value::Null),
+    };
+    if bucket.is_empty() {
+        return Err(anyhow!("s3 URI missing bucket: {uri}"));
+    }
+    Ok(json!({"bucket": bucket, "key": key}))
+}
+
+/// Validate an S3 bucket name against AWS's documented rules: 3–63 chars of
+/// `[a-z0-9.-]`, start/end alphanumeric, no `..`, not an IPv4 literal, no
+/// `xn--` prefix, no `-s3alias` suffix. Returns `{valid, reason}`. Pure.
+fn op_valid_bucket_name(opts: Value) -> Result<Value> {
+    let name = opts
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing name"))?;
+    let bytes = name.as_bytes();
+    let reason: Option<&str> = if name.len() < 3 || name.len() > 63 {
+        Some("must be 3-63 characters")
+    } else if !name
+        .bytes()
+        .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'.' || b == b'-')
+    {
+        Some("only lowercase letters, numbers, dots, and hyphens")
+    } else if !bytes[0].is_ascii_alphanumeric() || !bytes[bytes.len() - 1].is_ascii_alphanumeric() {
+        Some("must start and end with a letter or number")
+    } else if name.contains("..") {
+        Some("must not contain two adjacent periods")
+    } else if name.parse::<std::net::Ipv4Addr>().is_ok() {
+        Some("must not be formatted as an IP address")
+    } else if name.starts_with("xn--") {
+        Some("must not start with `xn--`")
+    } else if name.ends_with("-s3alias") {
+        Some("must not end with `-s3alias`")
+    } else {
+        None
+    };
+    Ok(json!({"name": name, "valid": reason.is_none(), "reason": reason}))
+}
+
 // ── exports ─────────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1443,6 +1559,26 @@ pub extern "C" fn aws__cloudwatch_put_metric(args: *const c_char) -> *const c_ch
 #[no_mangle]
 pub extern "C" fn aws__cloudwatch_list_metrics(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_cloudwatch_list_metrics)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__parse_arn(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_parse_arn(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__build_arn(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_build_arn(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__parse_s3_uri(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_parse_s3_uri(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_valid_bucket_name(opts) })
 }
 
 #[cfg(test)]
@@ -1930,5 +2066,91 @@ mod ffi_tests {
         assert_eq!(back["tags"], json!(["x", "y"]));
         assert_eq!(back["meta"]["k"], "v");
         assert_eq!(back["meta"]["nested"], json!([1, 2]));
+    }
+
+    // ── pure helpers (no AWS) ────────────────────────────────────────────────
+
+    #[test]
+    fn parse_arn_slash_resource_form() {
+        let v = op_parse_arn(json!({
+            "arn": "arn:aws:iam::123456789012:role/Admin"
+        }))
+        .unwrap();
+        assert_eq!(v["partition"], json!("aws"));
+        assert_eq!(v["service"], json!("iam"));
+        assert_eq!(v["region"], Value::Null, "IAM is global → empty region");
+        assert_eq!(v["account_id"], json!("123456789012"));
+        assert_eq!(v["resource_type"], json!("role"));
+        assert_eq!(v["resource_id"], json!("Admin"));
+    }
+
+    #[test]
+    fn parse_arn_colon_and_bare_resource_forms() {
+        // colon-separated resource (e.g. Lambda, SNS).
+        let lambda = op_parse_arn(json!({
+            "arn": "arn:aws:lambda:us-east-1:123456789012:function:my-fn"
+        }))
+        .unwrap();
+        assert_eq!(lambda["region"], json!("us-east-1"));
+        assert_eq!(lambda["resource_type"], json!("function"));
+        assert_eq!(lambda["resource_id"], json!("my-fn"));
+        // bare resource (e.g. S3 bucket): no type.
+        let s3 = op_parse_arn(json!({"arn": "arn:aws:s3:::my-bucket"})).unwrap();
+        assert_eq!(s3["resource_type"], Value::Null);
+        assert_eq!(s3["resource_id"], json!("my-bucket"));
+        assert_eq!(s3["account_id"], Value::Null, "S3 ARNs carry no account");
+    }
+
+    #[test]
+    fn parse_arn_rejects_non_arn() {
+        assert!(op_parse_arn(json!({"arn": "not:an:arn"})).is_err());
+        assert!(op_parse_arn(json!({})).is_err());
+    }
+
+    #[test]
+    fn build_arn_round_trips_through_parse() {
+        let built = op_build_arn(json!({
+            "service": "iam", "account_id": "123456789012", "resource": "role/Admin"
+        }))
+        .unwrap();
+        let arn = built["arn"].as_str().unwrap();
+        // partition defaults to aws, region empty → adjacent `::`.
+        assert_eq!(arn, "arn:aws:iam::123456789012:role/Admin");
+        let parsed = op_parse_arn(json!({"arn": arn})).unwrap();
+        assert_eq!(parsed["service"], json!("iam"));
+        assert_eq!(parsed["resource_id"], json!("Admin"));
+    }
+
+    #[test]
+    fn parse_s3_uri_splits_bucket_and_key() {
+        let v = op_parse_s3_uri(json!({"uri": "s3://my-bucket/path/to/object.txt"})).unwrap();
+        assert_eq!(v["bucket"], json!("my-bucket"));
+        assert_eq!(v["key"], json!("path/to/object.txt"));
+        let bucket_only = op_parse_s3_uri(json!({"uri": "s3://my-bucket"})).unwrap();
+        assert_eq!(bucket_only["key"], Value::Null);
+        assert!(op_parse_s3_uri(json!({"uri": "http://x/y"})).is_err());
+    }
+
+    #[test]
+    fn valid_bucket_name_enforces_s3_rules() {
+        assert_eq!(
+            op_valid_bucket_name(json!({"name": "my-logs.2025"})).unwrap()["valid"],
+            json!(true)
+        );
+        for (name, want) in [
+            ("ab", "3-63"),
+            ("MyBucket", "lowercase"),
+            ("-bad", "start and end"),
+            ("a..b", "adjacent periods"),
+            ("192.168.0.1", "IP address"),
+        ] {
+            let v = op_valid_bucket_name(json!({"name": name})).unwrap();
+            assert_eq!(v["valid"], json!(false), "{name} should be invalid");
+            assert!(
+                v["reason"].as_str().unwrap().contains(want),
+                "{name}: reason `{}` should mention `{want}`",
+                v["reason"]
+            );
+        }
     }
 }
