@@ -135,4 +135,14 @@ assert_eq AWS::partition_for_region("us-gov-west-1")->{partition},"aws-us-gov", 
 assert_eq AWS::partition_for_region("us-iso-east-1")->{partition},"aws-iso",    "partition_for_region: ISO (Secret)"
 assert_eq AWS::partition_for_region("us-isob-east-1")->{partition},"aws-iso-b", "partition_for_region: ISO-B (Top Secret) beats us-iso- prefix"
 
+# dns_suffix_for_partition: partition → endpoint DNS suffix (botocore).
+assert_eq AWS::dns_suffix_for_partition("aws")->{dns_suffix},        "amazonaws.com",     "dns_suffix: standard"
+assert_eq AWS::dns_suffix_for_partition("aws-cn")->{dns_suffix},     "amazonaws.com.cn",  "dns_suffix: China"
+assert_eq AWS::dns_suffix_for_partition("aws-us-gov")->{dns_suffix}, "amazonaws.com",     "dns_suffix: GovCloud"
+assert_eq AWS::dns_suffix_for_partition("aws-iso")->{dns_suffix},    "c2s.ic.gov",        "dns_suffix: ISO"
+assert_eq AWS::dns_suffix_for_partition("aws-iso-b")->{dns_suffix},  "sc2s.sgov.gov",     "dns_suffix: ISO-B"
+# pairs with partition_for_region.
+assert_eq AWS::dns_suffix_for_partition(AWS::partition_for_region("cn-north-1")->{partition})->{dns_suffix}, "amazonaws.com.cn", "dns_suffix: region → partition → suffix"
+assert_dies fn { AWS::dns_suffix_for_partition("aws-mars") }, "dns_suffix: rejects an unknown partition"
+
 test_run

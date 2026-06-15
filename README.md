@@ -265,6 +265,7 @@ AWS::s3_uri_to_arn($uri, $partition?) → { arn, bucket, key }   # s3://b/k → 
 AWS::arn_to_s3_uri($arn)     → { uri, bucket, key }   # arn:aws:s3:::b/k → s3://b/k; inverse of s3_uri_to_arn
 AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
 AWS::partition_for_region($r) → { region, partition }   # cn-*→aws-cn, us-gov-*→aws-us-gov, us-iso(b)-*→aws-iso(-b), else aws
+AWS::dns_suffix_for_partition($p) → { partition, dns_suffix }   # aws→amazonaws.com, aws-cn→amazonaws.com.cn, aws-iso→c2s.ic.gov, … (botocore)
 ```
 
 These open no client — pure string parsing/validation, so they run with no

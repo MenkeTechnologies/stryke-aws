@@ -1462,6 +1462,28 @@ fn op_partition_for_region(opts: Value) -> Result<Value> {
     Ok(json!({"region": region, "partition": partition}))
 }
 
+/// The DNS suffix for an AWS partition — the domain its service endpoints live
+/// under, from botocore's `partitions.json`: `aws` → `amazonaws.com`, `aws-cn` →
+/// `amazonaws.com.cn`, `aws-us-gov` → `amazonaws.com`, `aws-iso` → `c2s.ic.gov`,
+/// `aws-iso-b` → `sc2s.sgov.gov`. Pairs with `partition_for_region` to build
+/// endpoint hostnames. opts: `partition` (required). Returns
+/// `{partition, dns_suffix}`; errors on an unknown partition. Pure.
+fn op_dns_suffix_for_partition(opts: Value) -> Result<Value> {
+    let partition = opts
+        .get("partition")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing partition"))?;
+    let suffix = match partition {
+        "aws" => "amazonaws.com",
+        "aws-cn" => "amazonaws.com.cn",
+        "aws-us-gov" => "amazonaws.com",
+        "aws-iso" => "c2s.ic.gov",
+        "aws-iso-b" => "sc2s.sgov.gov",
+        other => return Err(anyhow!("unknown partition `{other}`")),
+    };
+    Ok(json!({"partition": partition, "dns_suffix": suffix}))
+}
+
 // ── exports ─────────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1724,6 +1746,14 @@ pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__partition_for_region(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_partition_for_region(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__dns_suffix_for_partition(args: *const c_char) -> *const c_char {
+    ffi_call_async(
+        args,
+        |opts| async move { op_dns_suffix_for_partition(opts) },
+    )
 }
 
 #[cfg(test)]
@@ -2407,5 +2437,35 @@ mod ffi_tests {
             json!("aws-iso")
         );
         assert!(op_partition_for_region(json!({})).is_err());
+    }
+
+    #[test]
+    fn dns_suffix_for_partition_matches_botocore() {
+        for (partition, suffix) in [
+            ("aws", "amazonaws.com"),
+            ("aws-cn", "amazonaws.com.cn"),
+            ("aws-us-gov", "amazonaws.com"),
+            ("aws-iso", "c2s.ic.gov"),
+            ("aws-iso-b", "sc2s.sgov.gov"),
+        ] {
+            assert_eq!(
+                op_dns_suffix_for_partition(json!({ "partition": partition })).unwrap()
+                    ["dns_suffix"],
+                json!(suffix),
+                "{partition} → {suffix}"
+            );
+        }
+        // Round-trips with partition_for_region: region → partition → suffix.
+        let part = op_partition_for_region(json!({"region": "cn-north-1"})).unwrap()["partition"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert_eq!(
+            op_dns_suffix_for_partition(json!({ "partition": part })).unwrap()["dns_suffix"],
+            json!("amazonaws.com.cn")
+        );
+        // Unknown partition and missing input reject.
+        assert!(op_dns_suffix_for_partition(json!({"partition": "aws-mars"})).is_err());
+        assert!(op_dns_suffix_for_partition(json!({})).is_err());
     }
 }
