@@ -153,4 +153,13 @@ assert_eq AWS::service_endpoint("ec2", "us-gov-west-1")->{endpoint}, "ec2.us-gov
 assert_eq AWS::service_endpoint("s3", "us-iso-east-1")->{partition}, "aws-iso", "service_endpoint: ISO partition resolved"
 assert_dies fn { AWS::service_endpoint("s3", "") }, "service_endpoint: requires a region"
 
+# region_for_az: AWS AZ → region (strip the trailing zone letter).
+val $az = AWS::region_for_az("us-east-1a")
+assert_eq $az->{region},      "us-east-1", "region_for_az: us-east-1a → us-east-1"
+assert_eq $az->{zone_letter}, "a",         "region_for_az: zone letter split out"
+assert_eq AWS::region_for_az("eu-west-2c")->{region},     "eu-west-2",      "region_for_az: eu-west-2c"
+assert_eq AWS::region_for_az("ap-southeast-1b")->{region}, "ap-southeast-1", "region_for_az: ap-southeast-1b"
+assert_dies fn { AWS::region_for_az("us-east-1") }, "region_for_az: rejects a bare region"
+assert_dies fn { AWS::region_for_az("us-east-1A") }, "region_for_az: rejects an uppercase zone letter"
+
 test_run

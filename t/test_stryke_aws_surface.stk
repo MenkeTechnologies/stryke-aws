@@ -147,5 +147,6 @@ assert_ok exists &AWS::valid_bucket_name, "AWS::valid_bucket_name exists"
 assert_ok exists &AWS::partition_for_region, "AWS::partition_for_region exists"
 assert_ok exists &AWS::dns_suffix_for_partition, "AWS::dns_suffix_for_partition exists"
 assert_ok exists &AWS::service_endpoint, "AWS::service_endpoint exists"
+assert_ok exists &AWS::region_for_az, "AWS::region_for_az exists"
 
 test_run

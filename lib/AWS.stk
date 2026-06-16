@@ -452,3 +452,10 @@ fn AWS::service_endpoint ($service, $region) {
     AWS::_decode("service_endpoint", aws__service_endpoint(to_json({ service => $service, region => $region })))
 }
 
+## Derive the AWS region from an availability-zone name (us-east-1a →
+## us-east-1): the AZ with its trailing zone letter removed. Returns a hashref
+## { az, region, zone_letter }; dies if the AZ is malformed.
+fn AWS::region_for_az ($az) {
+    AWS::_decode("region_for_az", aws__region_for_az(to_json({ az => $az })))
+}
+

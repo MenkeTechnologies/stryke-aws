@@ -1527,6 +1527,32 @@ fn op_dns_suffix_for_partition(opts: Value) -> Result<Value> {
     Ok(json!({"partition": partition, "dns_suffix": suffix}))
 }
 
+/// Derive the AWS region from an availability-zone name. A standard AZ is the
+/// region followed by a single zone letter (`us-east-1a` → `us-east-1`,
+/// `eu-west-2c` → `eu-west-2`), so the region is the AZ with that trailing
+/// letter removed; the preceding character must be the region's trailing digit.
+/// opts: `az` (or `zone`). Returns `{az, region, zone_letter}`; errors if the
+/// suffix isn't a region-digit followed by one letter. Pure.
+fn op_region_for_az(opts: Value) -> Result<Value> {
+    let az = opts
+        .get("az")
+        .or_else(|| opts.get("zone"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing az"))?;
+    let bytes = az.as_bytes();
+    if az.len() < 2
+        || !bytes[az.len() - 1].is_ascii_lowercase()
+        || !bytes[az.len() - 2].is_ascii_digit()
+    {
+        return Err(anyhow!(
+            "not a standard AZ (want <region><letter>, e.g. us-east-1a): {az}"
+        ));
+    }
+    let region = &az[..az.len() - 1];
+    let zone_letter = &az[az.len() - 1..];
+    Ok(json!({"az": az, "region": region, "zone_letter": zone_letter}))
+}
+
 // ── exports ─────────────────────────────────────────────────────────────────
 
 #[no_mangle]
@@ -1802,6 +1828,11 @@ pub extern "C" fn aws__dns_suffix_for_partition(args: *const c_char) -> *const c
 #[no_mangle]
 pub extern "C" fn aws__service_endpoint(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_service_endpoint(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__region_for_az(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_region_for_az(opts) })
 }
 
 #[cfg(test)]
@@ -2545,5 +2576,24 @@ mod ffi_tests {
         // Missing service/region reject.
         assert!(op_service_endpoint(json!({"region": "us-east-1"})).is_err());
         assert!(op_service_endpoint(json!({"service": "s3"})).is_err());
+    }
+
+    #[test]
+    fn region_for_az_strips_the_zone_letter() {
+        let v = op_region_for_az(json!({"az": "us-east-1a"})).unwrap();
+        assert_eq!(v["region"], json!("us-east-1"));
+        assert_eq!(v["zone_letter"], json!("a"));
+        assert_eq!(
+            op_region_for_az(json!({"az": "eu-west-2c"})).unwrap()["region"],
+            json!("eu-west-2")
+        );
+        assert_eq!(
+            op_region_for_az(json!({"az": "ap-southeast-1b"})).unwrap()["region"],
+            json!("ap-southeast-1")
+        );
+        // A bare region (ends in a digit) or a non-letter suffix errors.
+        assert!(op_region_for_az(json!({"az": "us-east-1"})).is_err());
+        assert!(op_region_for_az(json!({"az": "us-east-1A"})).is_err());
+        assert!(op_region_for_az(json!({})).is_err());
     }
 }
