@@ -1583,6 +1583,110 @@ fn op_s3_object_url(opts: Value) -> Result<Value> {
     }))
 }
 
+/// DNS suffixes botocore knows, longest first so the longest match wins
+/// (`amazonaws.com.cn` before `amazonaws.com`). Used by `parse_s3_url` to peel
+/// the suffix off an S3 endpoint host.
+const KNOWN_DNS_SUFFIXES: &[&str] = &[
+    "amazonaws.com.cn",
+    "sc2s.sgov.gov",
+    "c2s.ic.gov",
+    "amazonaws.com",
+];
+
+/// Percent-decode a URL path (inverse of `encode_s3_key`): `%XX` becomes its
+/// byte; a malformed escape is left literal. The decoded bytes are interpreted
+/// as UTF-8 (lossily, like the rest of the crate).
+fn decode_s3_key(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(h), Some(l)) = (hi, lo) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Split an S3 endpoint host's `<region>.<dns_suffix>` portion into the region
+/// (possibly empty for a legacy global endpoint) and the matched suffix.
+fn split_s3_endpoint(ep: &str) -> Result<(String, &'static str)> {
+    for suf in KNOWN_DNS_SUFFIXES {
+        if let Some(head) = ep.strip_suffix(suf) {
+            return Ok((head.trim_end_matches('.').to_string(), *suf));
+        }
+    }
+    Err(anyhow!("unrecognized S3 endpoint host `{ep}`"))
+}
+
+/// Parse an S3 HTTPS URL back into its parts — the inverse of `s3_object_url`.
+/// Handles virtual-hosted style (`https://<bucket>.s3.<region>.<suffix>/<key>`,
+/// what `s3_object_url` emits) and path style
+/// (`https://s3.<region>.<suffix>/<bucket>/<key>`); the region may be absent for
+/// a legacy global endpoint. The key is percent-decoded back to its raw form and
+/// the partition is resolved from the region. opts: `url`. Returns `{url, bucket,
+/// key, region, partition, style, host}`; `key` is null for a bucket-root URL.
+/// A bucket literally named `s3` in virtual-hosted form is read as path style.
+/// Pure.
+fn op_parse_s3_url(opts: Value) -> Result<Value> {
+    let url = opts
+        .get("url")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing url"))?;
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(|| anyhow!("S3 URL must start with http(s)://: `{url}`"))?;
+    let (host, path) = match rest.split_once('/') {
+        Some((h, p)) => (h, p),
+        None => (rest, ""),
+    };
+    let (style, bucket, region, suffix, key): (&str, String, String, &'static str, Option<String>) =
+        if let Some(after) = host.strip_prefix("s3.") {
+            // Path style: host is the bare S3 endpoint, bucket is the 1st segment.
+            let (region, suffix) = split_s3_endpoint(after)?;
+            let (b, k) = match path.split_once('/') {
+                Some((b, k)) => (b, k),
+                None => (path, ""),
+            };
+            if b.is_empty() {
+                return Err(anyhow!("path-style S3 URL has no bucket: `{url}`"));
+            }
+            let key = (!k.is_empty()).then(|| decode_s3_key(k));
+            ("path", b.to_string(), region, suffix, key)
+        } else {
+            // Virtual-hosted: bucket is everything before the `.s3.` marker.
+            let (b, after) = host
+                .split_once(".s3.")
+                .ok_or_else(|| anyhow!("not an S3 URL host `{host}`"))?;
+            if b.is_empty() {
+                return Err(anyhow!("virtual-hosted S3 URL has no bucket: `{url}`"));
+            }
+            let (region, suffix) = split_s3_endpoint(after)?;
+            let key = (!path.is_empty()).then(|| decode_s3_key(path));
+            ("virtual-hosted", b.to_string(), region, suffix, key)
+        };
+    let partition = partition_of(&region);
+    Ok(json!({
+        "url": url,
+        "bucket": bucket,
+        "key": key,
+        "region": region,
+        "partition": partition,
+        "style": style,
+        "host": host,
+        "dns_suffix": suffix,
+    }))
+}
+
 /// Derive the AWS region from an availability-zone name. A standard AZ is the
 /// region followed by a single zone letter (`us-east-1a` → `us-east-1`,
 /// `eu-west-2c` → `eu-west-2`), so the region is the AZ with that trailing
@@ -1889,6 +1993,11 @@ pub extern "C" fn aws__service_endpoint(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__s3_object_url(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_s3_object_url(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__parse_s3_url(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_parse_s3_url(opts) })
 }
 
 #[no_mangle]
@@ -2702,5 +2811,72 @@ mod ffi_tests {
         // Missing bucket/region reject.
         assert!(op_s3_object_url(json!({"region": "us-east-1"})).is_err());
         assert!(op_s3_object_url(json!({"bucket": "b"})).is_err());
+    }
+
+    #[test]
+    fn parse_s3_url_inverts_s3_object_url() {
+        // Virtual-hosted (what s3_object_url emits): recover every part.
+        let v = op_parse_s3_url(json!({
+            "url": "https://amzn-s3-demo-bucket1.s3.us-west-2.amazonaws.com/puppy.png",
+        }))
+        .unwrap();
+        assert_eq!(v["style"], json!("virtual-hosted"));
+        assert_eq!(v["bucket"], json!("amzn-s3-demo-bucket1"));
+        assert_eq!(v["key"], json!("puppy.png"));
+        assert_eq!(v["region"], json!("us-west-2"));
+        assert_eq!(v["partition"], json!("aws"));
+        assert_eq!(v["dns_suffix"], json!("amazonaws.com"));
+        // Round-trip: build then parse recovers bucket/region/key for every form.
+        for (bucket, region, key) in [
+            ("b", "us-east-1", Some("my dir/file (1).png")),
+            ("amzn-s3-demo-bucket1", "us-west-2", Some("puppy.png")),
+            ("b", "cn-north-1", Some("k")),
+            ("b", "eu-west-1", None),
+        ] {
+            let mut build = json!({"bucket": bucket, "region": region});
+            if let Some(k) = key {
+                build["key"] = json!(k);
+            }
+            let url = op_s3_object_url(build).unwrap()["url"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let p = op_parse_s3_url(json!({ "url": url })).unwrap();
+            assert_eq!(p["bucket"], json!(bucket), "bucket round-trip for {url}");
+            assert_eq!(p["region"], json!(region), "region round-trip for {url}");
+            match key {
+                Some(k) => assert_eq!(p["key"], json!(k), "key round-trip for {url}"),
+                None => assert_eq!(p["key"], Value::Null, "no key for {url}"),
+            }
+        }
+        // Path style: bucket is the first path segment.
+        let p = op_parse_s3_url(json!({
+            "url": "https://s3.eu-west-1.amazonaws.com/my-bucket/a/b.txt",
+        }))
+        .unwrap();
+        assert_eq!(p["style"], json!("path"));
+        assert_eq!(p["bucket"], json!("my-bucket"));
+        assert_eq!(p["key"], json!("a/b.txt"));
+        assert_eq!(p["region"], json!("eu-west-1"));
+        // China suffix resolves to its partition.
+        let cn =
+            op_parse_s3_url(json!({"url": "https://b.s3.cn-north-1.amazonaws.com.cn/k"})).unwrap();
+        assert_eq!(cn["region"], json!("cn-north-1"));
+        assert_eq!(cn["partition"], json!("aws-cn"));
+        assert_eq!(cn["dns_suffix"], json!("amazonaws.com.cn"));
+        // Region-less legacy global endpoint: empty region, aws partition.
+        let g = op_parse_s3_url(json!({"url": "https://b.s3.amazonaws.com/k"})).unwrap();
+        assert_eq!(g["region"], json!(""));
+        assert_eq!(g["partition"], json!("aws"));
+        // Bucket root → null key.
+        assert_eq!(
+            op_parse_s3_url(json!({"url": "https://b.s3.eu-west-1.amazonaws.com"})).unwrap()["key"],
+            Value::Null
+        );
+        // Errors: no scheme, unrecognized endpoint, empty bucket.
+        assert!(op_parse_s3_url(json!({"url": "b.s3.us-east-1.amazonaws.com/k"})).is_err());
+        assert!(op_parse_s3_url(json!({"url": "https://b.s3.us-west-2.example.com/k"})).is_err());
+        assert!(op_parse_s3_url(json!({"url": "https://s3.us-east-1.amazonaws.com/"})).is_err());
+        assert!(op_parse_s3_url(json!({})).is_err());
     }
 }

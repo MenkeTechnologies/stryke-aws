@@ -160,6 +160,27 @@ assert_eq AWS::s3_object_url("b", "us-east-1", "my dir/x (1).png")->{url}, "http
 assert_eq AWS::s3_object_url("b", "cn-north-1", "k")->{url}, "https://b.s3.cn-north-1.amazonaws.com.cn/k", "s3_object_url: China DNS suffix"
 assert_dies fn { AWS::s3_object_url("b", "") }, "s3_object_url: requires a region"
 
+# parse_s3_url: inverse of s3_object_url (virtual-hosted + path styles).
+val $vh = AWS::parse_s3_url("https://amzn-s3-demo-bucket1.s3.us-west-2.amazonaws.com/puppy.png")
+assert_eq $vh->{style},     "virtual-hosted",       "parse_s3_url: virtual-hosted style"
+assert_eq $vh->{bucket},    "amzn-s3-demo-bucket1", "parse_s3_url: bucket extracted"
+assert_eq $vh->{key},       "puppy.png",            "parse_s3_url: key extracted"
+assert_eq $vh->{region},    "us-west-2",            "parse_s3_url: region extracted"
+assert_eq $vh->{partition}, "aws",                  "parse_s3_url: partition resolved"
+# Round-trips s3_object_url, including a percent-encoded key.
+val $built = AWS::s3_object_url("b", "us-east-1", "my dir/x (1).png")->{url}
+assert_eq AWS::parse_s3_url($built)->{key}, "my dir/x (1).png", "parse_s3_url: percent-decodes the key back"
+# Path-style: bucket is the first path segment.
+val $ps = AWS::parse_s3_url("https://s3.eu-west-1.amazonaws.com/my-bucket/a/b.txt")
+assert_eq $ps->{style},  "path",      "parse_s3_url: path style detected"
+assert_eq $ps->{bucket}, "my-bucket", "parse_s3_url: path-style bucket"
+assert_eq $ps->{key},    "a/b.txt",   "parse_s3_url: path-style key"
+# China suffix → aws-cn partition.
+assert_eq AWS::parse_s3_url("https://b.s3.cn-north-1.amazonaws.com.cn/k")->{partition}, "aws-cn", "parse_s3_url: China partition"
+# Bucket root → undef key.
+assert_ok !defined(AWS::parse_s3_url("https://b.s3.eu-west-1.amazonaws.com")->{key}), "parse_s3_url: bucket root has no key"
+assert_dies fn { AWS::parse_s3_url("b.s3.us-east-1.amazonaws.com/k") }, "parse_s3_url: requires a scheme"
+
 # region_for_az: AWS AZ → region (strip the trailing zone letter).
 val $az = AWS::region_for_az("us-east-1a")
 assert_eq $az->{region},      "us-east-1", "region_for_az: us-east-1a → us-east-1"

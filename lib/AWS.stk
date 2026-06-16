@@ -461,6 +461,15 @@ fn AWS::s3_object_url ($bucket, $region, $key = undef) {
     AWS::_decode("s3_object_url", aws__s3_object_url(to_json({ bucket => $bucket, region => $region, key => $key })))
 }
 
+## Parse an S3 HTTPS URL back into its parts — inverse of s3_object_url. Handles
+## virtual-hosted (bucket.s3.region.suffix/key) and path style
+## (s3.region.suffix/bucket/key); region may be absent (legacy global). $key is
+## percent-decoded; undef for a bucket-root URL. Returns a hashref
+## { url, bucket, key, region, partition, style, host, dns_suffix }.
+fn AWS::parse_s3_url ($url) {
+    AWS::_decode("parse_s3_url", aws__parse_s3_url(to_json({ url => $url })))
+}
+
 ## Derive the AWS region from an availability-zone name (us-east-1a →
 ## us-east-1): the AZ with its trailing zone letter removed. Returns a hashref
 ## { az, region, zone_letter }; dies if the AZ is malformed.
