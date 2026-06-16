@@ -429,6 +429,14 @@ fn AWS::valid_bucket_name ($name) {
     AWS::_decode("valid_bucket_name", aws__valid_bucket_name(to_json({ name => $name })))
 }
 
+## Validate an AWS account ID — exactly 12 decimal digits (leading zeros allowed,
+## e.g. "012345678901"). parse_arn surfaces the account field but never checks it;
+## this is the standalone predicate. Returns { account_id, valid, reason } (reason
+## undef when valid).
+fn AWS::valid_account_id ($account_id) {
+    AWS::_decode("valid_account_id", aws__valid_account_id(to_json({ account_id => $account_id })))
+}
+
 ## Resolve the ARN partition for an AWS region: cn-* → aws-cn, us-gov-* →
 ## aws-us-gov, us-isob-* → aws-iso-b, us-iso-* → aws-iso, else aws. Returns a
 ## hashref { region, partition }. Feed the partition into build_arn.

@@ -128,6 +128,14 @@ val $ip = AWS::valid_bucket_name("192.168.0.1")
 assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"
 assert_match qr/IP address/, $ip->{reason}, "valid_bucket_name: reason names the rule"
 
+# valid_account_id: exactly 12 decimal digits (leading zeros allowed).
+assert_ok AWS::valid_account_id("123456789012")->{valid}, "valid_account_id: 12 digits is valid"
+assert_ok AWS::valid_account_id("012345678901")->{valid}, "valid_account_id: leading zeros allowed"
+val $short = AWS::valid_account_id("12345")
+assert_eq $short->{valid}, 0, "valid_account_id: rejects the wrong length"
+assert_match qr/12 digits/, $short->{reason}, "valid_account_id: reason names the rule"
+assert_eq AWS::valid_account_id("12345678901a")->{valid}, 0, "valid_account_id: rejects non-digits"
+
 # partition_for_region: region → ARN partition.
 assert_eq AWS::partition_for_region("us-east-1")->{partition},    "aws",        "partition_for_region: standard region"
 assert_eq AWS::partition_for_region("cn-north-1")->{partition},   "aws-cn",     "partition_for_region: China"

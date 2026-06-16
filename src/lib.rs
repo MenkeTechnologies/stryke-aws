@@ -1436,6 +1436,29 @@ fn op_valid_bucket_name(opts: Value) -> Result<Value> {
     Ok(json!({"name": name, "valid": reason.is_none(), "reason": reason}))
 }
 
+/// Validate an AWS account ID — exactly 12 decimal digits, leading zeros allowed
+/// (e.g. `012345678901`), per the AWS account-identifier reference. `parse_arn`
+/// surfaces the account field but never checks it; this is the standalone
+/// predicate, mirroring `valid_bucket_name`'s `{valid, reason}` shape. opts:
+/// `account_id` (or `id`/`value`, required). Returns `{account_id, valid,
+/// reason}`. Pure.
+fn op_valid_account_id(opts: Value) -> Result<Value> {
+    let id = opts
+        .get("account_id")
+        .or_else(|| opts.get("id"))
+        .or_else(|| opts.get("value"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing account_id"))?;
+    let reason: Option<&str> = if id.len() != 12 {
+        Some("must be exactly 12 digits")
+    } else if !id.bytes().all(|b| b.is_ascii_digit()) {
+        Some("must contain only digits")
+    } else {
+        None
+    };
+    Ok(json!({"account_id": id, "valid": reason.is_none(), "reason": reason}))
+}
+
 /// Resolve the ARN partition for an AWS region. AWS groups regions into five
 /// partitions: `aws-cn` (`cn-*`), `aws-us-gov` (`us-gov-*`), `aws-iso-b`
 /// (`us-isob-*`, Top Secret), `aws-iso` (`us-iso-*`, Secret), and `aws` for
@@ -2011,6 +2034,11 @@ pub extern "C" fn aws__arn_to_s3_uri(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_valid_bucket_name(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__valid_account_id(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_valid_account_id(opts) })
 }
 
 #[no_mangle]
@@ -2705,6 +2733,41 @@ mod ffi_tests {
                 v["reason"]
             );
         }
+    }
+
+    #[test]
+    fn valid_account_id_requires_exactly_twelve_digits() {
+        // Canonical 12-digit IDs, including leading zeros.
+        assert_eq!(
+            op_valid_account_id(json!({"account_id": "123456789012"})).unwrap()["valid"],
+            json!(true)
+        );
+        assert_eq!(
+            op_valid_account_id(json!({"account_id": "012345678901"})).unwrap()["valid"],
+            json!(true),
+            "leading zeros are allowed"
+        );
+        // Wrong length and non-digit characters are rejected with a reason.
+        for (id, want) in [
+            ("12345678901", "12 digits"),   // 11 digits
+            ("1234567890123", "12 digits"), // 13 digits
+            ("12345678901a", "only digits"),
+            ("", "12 digits"),
+        ] {
+            let v = op_valid_account_id(json!({ "account_id": id })).unwrap();
+            assert_eq!(v["valid"], json!(false), "{id:?} should be invalid");
+            assert!(
+                v["reason"].as_str().unwrap().contains(want),
+                "{id:?}: reason `{}` should mention `{want}`",
+                v["reason"]
+            );
+        }
+        // `id` / `value` aliases and the missing-arg error.
+        assert_eq!(
+            op_valid_account_id(json!({"id": "123456789012"})).unwrap()["valid"],
+            json!(true)
+        );
+        assert!(op_valid_account_id(json!({})).is_err());
     }
 
     #[test]
