@@ -1436,6 +1436,28 @@ fn op_valid_bucket_name(opts: Value) -> Result<Value> {
     Ok(json!({"name": name, "valid": reason.is_none(), "reason": reason}))
 }
 
+/// Validate an S3 object key — a non-empty sequence of Unicode characters whose
+/// UTF-8 encoding is at most 1,024 bytes, per the S3 object-key reference. Any
+/// character (including `/`) is allowed; only emptiness and the byte-length cap
+/// are hard errors. The object-key counterpart of `valid_bucket_name`, mirroring
+/// its `{valid, reason}` shape. opts: `key` (or `name`, required). Returns `{key,
+/// valid, reason, bytes}` where `bytes` is the UTF-8 length. Pure.
+fn op_valid_s3_key(opts: Value) -> Result<Value> {
+    let key = opts
+        .get("key")
+        .or_else(|| opts.get("name"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing key"))?;
+    let reason: Option<&str> = if key.is_empty() {
+        Some("must not be empty")
+    } else if key.len() > 1024 {
+        Some("UTF-8 encoding must be at most 1024 bytes")
+    } else {
+        None
+    };
+    Ok(json!({"key": key, "valid": reason.is_none(), "reason": reason, "bytes": key.len()}))
+}
+
 /// Validate an AWS account ID — exactly 12 decimal digits, leading zeros allowed
 /// (e.g. `012345678901`), per the AWS account-identifier reference. `parse_arn`
 /// surfaces the account field but never checks it; this is the standalone
@@ -2064,6 +2086,11 @@ pub extern "C" fn aws__arn_to_s3_uri(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_valid_bucket_name(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__valid_s3_key(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_valid_s3_key(opts) })
 }
 
 #[no_mangle]
@@ -2768,6 +2795,38 @@ mod ffi_tests {
                 v["reason"]
             );
         }
+    }
+
+    #[test]
+    fn valid_s3_key_enforces_byte_length_and_non_empty() {
+        // Ordinary keys (with slashes and unicode) are valid.
+        let v = op_valid_s3_key(json!({"key": "logs/2025/06/events.json"})).unwrap();
+        assert_eq!(v["valid"], json!(true));
+        assert_eq!(v["bytes"], json!(24));
+        // A multibyte key counts UTF-8 bytes, not chars.
+        let u = op_valid_s3_key(json!({"key": "café"})).unwrap();
+        assert_eq!(u["bytes"], json!(5)); // é is 2 bytes
+        assert_eq!(u["valid"], json!(true));
+        // Empty is invalid.
+        let e = op_valid_s3_key(json!({"key": ""})).unwrap();
+        assert_eq!(e["valid"], json!(false));
+        assert!(e["reason"].as_str().unwrap().contains("empty"));
+        // Exactly 1024 bytes is valid; 1025 is not.
+        let k1024 = "a".repeat(1024);
+        assert_eq!(
+            op_valid_s3_key(json!({"key": k1024})).unwrap()["valid"],
+            json!(true)
+        );
+        let k1025 = "a".repeat(1025);
+        let over = op_valid_s3_key(json!({"key": k1025})).unwrap();
+        assert_eq!(over["valid"], json!(false));
+        assert!(over["reason"].as_str().unwrap().contains("1024 bytes"));
+        // `name` alias; missing arg errors.
+        assert_eq!(
+            op_valid_s3_key(json!({"name": "k"})).unwrap()["valid"],
+            json!(true)
+        );
+        assert!(op_valid_s3_key(json!({})).is_err());
     }
 
     #[test]

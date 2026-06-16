@@ -128,6 +128,15 @@ val $ip = AWS::valid_bucket_name("192.168.0.1")
 assert_eq $ip->{valid}, 0, "valid_bucket_name: rejects IP form"
 assert_match qr/IP address/, $ip->{reason}, "valid_bucket_name: reason names the rule"
 
+# valid_s3_key: non-empty, at most 1024 UTF-8 bytes.
+assert_ok AWS::valid_s3_key("logs/2025/06/events.json")->{valid}, "valid_s3_key: ordinary key with slashes is valid"
+assert_eq AWS::valid_s3_key("café")->{bytes}, 5, "valid_s3_key: counts UTF-8 bytes (é is 2)"
+val $ek = AWS::valid_s3_key("")
+assert_eq $ek->{valid}, 0, "valid_s3_key: empty key is invalid"
+assert_match qr/empty/, $ek->{reason}, "valid_s3_key: reason names the empty rule"
+assert_eq AWS::valid_s3_key("a" x 1024)->{valid}, 1, "valid_s3_key: exactly 1024 bytes is valid"
+assert_eq AWS::valid_s3_key("a" x 1025)->{valid}, 0, "valid_s3_key: 1025 bytes is too long"
+
 # valid_account_id: exactly 12 decimal digits (leading zeros allowed).
 assert_ok AWS::valid_account_id("123456789012")->{valid}, "valid_account_id: 12 digits is valid"
 assert_ok AWS::valid_account_id("012345678901")->{valid}, "valid_account_id: leading zeros allowed"

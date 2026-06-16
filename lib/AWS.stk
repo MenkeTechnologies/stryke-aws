@@ -429,6 +429,14 @@ fn AWS::valid_bucket_name ($name) {
     AWS::_decode("valid_bucket_name", aws__valid_bucket_name(to_json({ name => $name })))
 }
 
+## Validate an S3 object $key — non-empty and at most 1024 bytes (UTF-8); any
+## character (including "/") is allowed. The object-key companion of
+## valid_bucket_name. Returns { key, valid, reason, bytes } (reason undef when
+## valid; bytes is the UTF-8 length).
+fn AWS::valid_s3_key ($key) {
+    AWS::_decode("valid_s3_key", aws__valid_s3_key(to_json({ key => $key })))
+}
+
 ## Validate an AWS account ID — exactly 12 decimal digits (leading zeros allowed,
 ## e.g. "012345678901"). parse_arn surfaces the account field but never checks it;
 ## this is the standalone predicate. Returns { account_id, valid, reason } (reason
