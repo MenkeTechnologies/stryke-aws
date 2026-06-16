@@ -265,6 +265,7 @@ AWS::s3_uri_to_arn($uri, $partition?) → { arn, bucket, key }   # s3://b/k → 
 AWS::arn_to_s3_uri($arn)     → { uri, bucket, key }   # arn:aws:s3:::b/k → s3://b/k; inverse of s3_uri_to_arn
 AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
 AWS::valid_s3_key($key)      → { key, valid, reason, bytes }   # S3 object key: non-empty, ≤1024 UTF-8 bytes (any char, incl /)
+AWS::valid_sqs_queue_name($n) → { name, valid, reason, fifo }   # SQS queue name: ≤80 chars, alphanumeric/-/_, FIFO ends .fifo (counts toward 80); case-sensitive
 AWS::valid_account_id($id)   → { account_id, valid, reason }   # exactly 12 decimal digits (leading zeros allowed)
 AWS::valid_arn($arn)         → { arn, valid, reason }          # non-throwing structure check: 6 fields, arn prefix, non-empty partition/service/resource
 AWS::partition_for_region($r) → { region, partition }   # cn-*→aws-cn, us-gov-*→aws-us-gov, us-iso(b)-*→aws-iso(-b), else aws

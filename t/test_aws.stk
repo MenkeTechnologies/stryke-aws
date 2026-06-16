@@ -137,6 +137,15 @@ assert_match qr/empty/, $ek->{reason}, "valid_s3_key: reason names the empty rul
 assert_eq AWS::valid_s3_key("a" x 1024)->{valid}, 1, "valid_s3_key: exactly 1024 bytes is valid"
 assert_eq AWS::valid_s3_key("a" x 1025)->{valid}, 0, "valid_s3_key: 1025 bytes is too long"
 
+# valid_sqs_queue_name: ≤80 chars, alphanumeric/-/_, FIFO ends .fifo.
+assert_ok AWS::valid_sqs_queue_name("my-Queue_1")->{valid},          "valid_sqs_queue_name: standard name (case-sensitive)"
+assert_eq AWS::valid_sqs_queue_name("orders.fifo")->{fifo}, 1,       "valid_sqs_queue_name: .fifo suffix flags a FIFO queue"
+assert_ok AWS::valid_sqs_queue_name("orders.fifo")->{valid},         "valid_sqs_queue_name: FIFO name is valid"
+assert_eq AWS::valid_sqs_queue_name("my.queue")->{valid}, 0,         "valid_sqs_queue_name: a `.` is only allowed in .fifo"
+assert_eq AWS::valid_sqs_queue_name("a" x 81)->{valid}, 0,           "valid_sqs_queue_name: over 80 chars rejected"
+assert_eq AWS::valid_sqs_queue_name(("a" x 76) . ".fifo")->{valid}, 0, "valid_sqs_queue_name: .fifo suffix counts toward the 80-char limit"
+assert_dies fn { AWS::valid_sqs_queue_name() }, "valid_sqs_queue_name: dies on missing name"
+
 # valid_account_id: exactly 12 decimal digits (leading zeros allowed).
 assert_ok AWS::valid_account_id("123456789012")->{valid}, "valid_account_id: 12 digits is valid"
 assert_ok AWS::valid_account_id("012345678901")->{valid}, "valid_account_id: leading zeros allowed"

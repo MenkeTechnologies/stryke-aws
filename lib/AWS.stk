@@ -437,6 +437,15 @@ fn AWS::valid_s3_key ($key) {
     AWS::_decode("valid_s3_key", aws__valid_s3_key(to_json({ key => $key })))
 }
 
+## Validate an Amazon SQS queue $name per CreateQueue: up to 80 chars of
+## alphanumeric, hyphens and underscores (case-sensitive). A FIFO queue name ends
+## with the ".fifo" suffix (which counts toward the 80-char limit); a "." is
+## allowed only in that suffix. Returns a hashref { name, valid, reason, fifo }
+## (reason undef when valid; fifo true when the name carries the .fifo suffix).
+fn AWS::valid_sqs_queue_name ($name) {
+    AWS::_decode("valid_sqs_queue_name", aws__valid_sqs_queue_name(to_json({ name => $name })))
+}
+
 ## Validate an AWS account ID — exactly 12 decimal digits (leading zeros allowed,
 ## e.g. "012345678901"). parse_arn surfaces the account field but never checks it;
 ## this is the standalone predicate. Returns { account_id, valid, reason } (reason

@@ -1458,6 +1458,43 @@ fn op_valid_s3_key(opts: Value) -> Result<Value> {
     Ok(json!({"key": key, "valid": reason.is_none(), "reason": reason, "bytes": key.len()}))
 }
 
+/// Validate an Amazon SQS queue name per the CreateQueue reference: up to 80
+/// characters of alphanumeric characters, hyphens (`-`) and underscores (`_`),
+/// case-sensitive. A FIFO queue name additionally ends with the `.fifo` suffix
+/// (which counts toward the 80-character limit); the base name before `.fifo`
+/// must still match the standard charset, and a `.` is allowed only as part of
+/// that suffix. opts: `name` (required). Returns `{name, valid, reason, fifo}`
+/// where `fifo` is whether the name carries the `.fifo` suffix. Pure.
+fn op_valid_sqs_queue_name(opts: Value) -> Result<Value> {
+    let name = opts
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing name"))?;
+    let (base, is_fifo) = match name.strip_suffix(".fifo") {
+        Some(b) => (b, true),
+        None => (name, false),
+    };
+    let charset_ok = base
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+    let reason: Option<&str> = if name.is_empty() {
+        Some("must not be empty")
+    } else if name.len() > 80 {
+        Some("must be at most 80 characters (including any .fifo suffix)")
+    } else if is_fifo && base.is_empty() {
+        Some("FIFO queue name needs a base name before the .fifo suffix")
+    } else if !charset_ok {
+        if is_fifo {
+            Some("only alphanumeric characters, hyphens, and underscores before the .fifo suffix")
+        } else {
+            Some("only alphanumeric characters, hyphens, and underscores (a `.` is allowed only in a .fifo suffix)")
+        }
+    } else {
+        None
+    };
+    Ok(json!({"name": name, "valid": reason.is_none(), "reason": reason, "fifo": is_fifo}))
+}
+
 /// Validate an AWS account ID — exactly 12 decimal digits, leading zeros allowed
 /// (e.g. `012345678901`), per the AWS account-identifier reference. `parse_arn`
 /// surfaces the account field but never checks it; this is the standalone
@@ -2140,6 +2177,11 @@ pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__valid_s3_key(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_valid_s3_key(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__valid_sqs_queue_name(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_valid_sqs_queue_name(opts) })
 }
 
 #[no_mangle]
@@ -2881,6 +2923,41 @@ mod ffi_tests {
             json!(true)
         );
         assert!(op_valid_s3_key(json!({})).is_err());
+    }
+
+    #[test]
+    fn valid_sqs_queue_name_enforces_create_queue_rules() {
+        let chk = |n: &str| op_valid_sqs_queue_name(json!({ "name": n })).unwrap();
+        // Standard queue names: alphanumeric, hyphen, underscore; case-sensitive.
+        let ok = chk("my-Queue_1");
+        assert_eq!(ok["valid"], json!(true));
+        assert_eq!(ok["fifo"], json!(false));
+        // A FIFO queue name ends with .fifo.
+        let fifo = chk("orders.fifo");
+        assert_eq!(fifo["valid"], json!(true));
+        assert_eq!(fifo["fifo"], json!(true));
+        // 80 chars is the limit (including .fifo).
+        assert_eq!(chk(&"a".repeat(80))["valid"], json!(true));
+        assert_eq!(chk(&"a".repeat(81))["valid"], json!(false));
+        assert_eq!(
+            chk(&("a".repeat(75) + ".fifo"))["valid"],
+            json!(true),
+            "75 + .fifo = 80, the limit"
+        );
+        assert_eq!(
+            chk(&("a".repeat(76) + ".fifo"))["valid"],
+            json!(false),
+            "76 + .fifo = 81 > 80"
+        );
+        // A `.` is only allowed in the .fifo suffix.
+        assert_eq!(chk("my.queue")["valid"], json!(false));
+        // Other disallowed characters.
+        for bad in ["", "has space", "slash/no", "dollar$"] {
+            assert_eq!(chk(bad)["valid"], json!(false), "`{bad}` should be invalid");
+        }
+        // A bare `.fifo` has no base name.
+        assert_eq!(chk(".fifo")["valid"], json!(false));
+        assert!(op_valid_sqs_queue_name(json!({})).is_err());
     }
 
     #[test]
