@@ -1555,6 +1555,55 @@ fn op_partition_for_region(opts: Value) -> Result<Value> {
     Ok(json!({"region": region, "partition": partition_of(region)}))
 }
 
+/// Validate an AWS region name against botocore `partitions.json` `regionRegex`
+/// — the partition is resolved from the region prefix (so it works across
+/// aws/aws-cn/aws-us-gov/aws-iso/aws-iso-b) and the name is checked against that
+/// partition's documented shape: standard `(us|eu|ap|sa|ca|me|af|il|mx)-<area>-<n>`,
+/// `cn-<area>-<n>`, `us-gov-<area>-<n>`, `us-iso-<area>-<n>`, `us-isob-<area>-<n>`
+/// (`<area>` is `\w+`, `<n>` is `\d+`). Unlike `partition_for_region`, which
+/// classifies any string, this rejects malformed names — the region-name member
+/// of the `valid_*` family, mirroring its `{valid, reason}` shape. opts: `region`
+/// (or `name`, required). Returns `{region, valid, partition, reason}`. Pure.
+fn op_valid_region(opts: Value) -> Result<Value> {
+    let region = opts
+        .get("region")
+        .or_else(|| opts.get("name"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing region"))?;
+    let partition = partition_of(region);
+    let is_area =
+        |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    let is_num = |s: &str| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit());
+    let parts: Vec<&str> = region.split('-').collect();
+    let reason: Option<String> = match partition {
+        "aws" => {
+            const GEOS: [&str; 9] = ["us", "eu", "ap", "sa", "ca", "me", "af", "il", "mx"];
+            if parts.len() != 3 || !is_area(parts[1]) || !is_num(parts[2]) {
+                Some("must be <geo>-<area>-<number> (e.g. us-east-1)".into())
+            } else if !GEOS.contains(&parts[0]) {
+                Some(format!(
+                    "unknown geography `{}` (us|eu|ap|sa|ca|me|af|il|mx)",
+                    parts[0]
+                ))
+            } else {
+                None
+            }
+        }
+        "aws-cn" => (!(parts.len() == 3 && is_area(parts[1]) && is_num(parts[2])))
+            .then(|| "China region must be cn-<area>-<number>".into()),
+        "aws-us-gov" => (!(parts.len() == 4 && is_area(parts[2]) && is_num(parts[3])))
+            .then(|| "GovCloud region must be us-gov-<area>-<number>".into()),
+        "aws-iso" => (!(parts.len() == 4 && is_area(parts[2]) && is_num(parts[3])))
+            .then(|| "ISO region must be us-iso-<area>-<number>".into()),
+        "aws-iso-b" => (!(parts.len() == 4 && is_area(parts[2]) && is_num(parts[3])))
+            .then(|| "ISO-B region must be us-isob-<area>-<number>".into()),
+        _ => Some("unknown partition".into()),
+    };
+    Ok(
+        json!({"region": region, "valid": reason.is_none(), "partition": partition, "reason": reason}),
+    )
+}
+
 /// Build a regional service endpoint hostname `<service>.<region>.<dns_suffix>`
 /// — the canonical AWS endpoint form (e.g. `s3.us-east-1.amazonaws.com`,
 /// `dynamodb.cn-north-1.amazonaws.com.cn`). Resolves the region's partition and
@@ -2106,6 +2155,11 @@ pub extern "C" fn aws__valid_arn(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__partition_for_region(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_partition_for_region(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__valid_region(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_valid_region(opts) })
 }
 
 #[no_mangle]
@@ -2926,6 +2980,46 @@ mod ffi_tests {
             json!("aws-iso")
         );
         assert!(op_partition_for_region(json!({})).is_err());
+    }
+
+    #[test]
+    fn valid_region_enforces_botocore_region_regex() {
+        let ok = |r: &str| op_valid_region(json!({ "region": r })).unwrap()["valid"] == json!(true);
+        // Valid across every modeled partition.
+        for r in [
+            "us-east-1",
+            "eu-west-3",
+            "ap-southeast-2",
+            "mx-central-1",
+            "il-central-1",
+            "cn-north-1",
+            "us-gov-west-1",
+            "us-iso-east-1",
+            "us-isob-east-1",
+        ] {
+            assert!(ok(r), "{r} should be valid");
+        }
+        // The resolved partition is reported.
+        let g = op_valid_region(json!({"region": "us-gov-east-1"})).unwrap();
+        assert_eq!(g["partition"], json!("aws-us-gov"));
+        assert_eq!(g["valid"], json!(true));
+        // Invalid: unknown geography, wrong segment count, non-numeric trailer,
+        // GovCloud/cn shape violations, empty.
+        for bad in [
+            "xx-east-1",   // unknown geo
+            "us-east",     // missing number
+            "us-east-one", // non-numeric
+            "useast1",     // no separators
+            "us-gov-1",    // gov needs an area segment
+            "cn-1",        // cn needs an area segment
+            "",
+        ] {
+            assert!(!ok(bad), "{bad} should be invalid");
+        }
+        // The reason is populated when invalid.
+        let r = op_valid_region(json!({"region": "xx-east-1"})).unwrap();
+        assert!(r["reason"].is_string(), "invalid region carries a reason");
+        assert!(op_valid_region(json!({})).is_err());
     }
 
     #[test]

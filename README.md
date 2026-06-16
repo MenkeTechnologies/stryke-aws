@@ -268,6 +268,7 @@ AWS::valid_s3_key($key)      → { key, valid, reason, bytes }   # S3 object key
 AWS::valid_account_id($id)   → { account_id, valid, reason }   # exactly 12 decimal digits (leading zeros allowed)
 AWS::valid_arn($arn)         → { arn, valid, reason }          # non-throwing structure check: 6 fields, arn prefix, non-empty partition/service/resource
 AWS::partition_for_region($r) → { region, partition }   # cn-*→aws-cn, us-gov-*→aws-us-gov, us-iso(b)-*→aws-iso(-b), else aws
+AWS::valid_region($r)        → { region, valid, partition, reason }   # botocore regionRegex per partition; rejects malformed names (partition_for_region never does)
 AWS::dns_suffix_for_partition($p) → { partition, dns_suffix }   # aws→amazonaws.com, aws-cn→amazonaws.com.cn, aws-iso→c2s.ic.gov, … (botocore)
 AWS::service_endpoint($svc, $region) → { service, region, partition, dns_suffix, endpoint, url }   # <svc>.<region>.<dns_suffix> (s3.us-east-1.amazonaws.com)
 AWS::parse_service_endpoint($endpoint) → { endpoint, service, region, partition, dns_suffix, url }   # inverse of service_endpoint; host or URL → parts

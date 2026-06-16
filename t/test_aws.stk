@@ -161,6 +161,18 @@ assert_eq AWS::partition_for_region("us-gov-west-1")->{partition},"aws-us-gov", 
 assert_eq AWS::partition_for_region("us-iso-east-1")->{partition},"aws-iso",    "partition_for_region: ISO (Secret)"
 assert_eq AWS::partition_for_region("us-isob-east-1")->{partition},"aws-iso-b", "partition_for_region: ISO-B (Top Secret) beats us-iso- prefix"
 
+# valid_region: botocore regionRegex validation (unlike partition_for_region, rejects malformed names).
+assert_ok AWS::valid_region("us-east-1")->{valid},        "valid_region: standard region"
+assert_ok AWS::valid_region("mx-central-1")->{valid},     "valid_region: mx geography (botocore-added)"
+assert_ok AWS::valid_region("cn-north-1")->{valid},       "valid_region: China region"
+assert_ok AWS::valid_region("us-gov-west-1")->{valid},    "valid_region: GovCloud region"
+assert_ok AWS::valid_region("us-isob-east-1")->{valid},   "valid_region: ISO-B region"
+assert_eq AWS::valid_region("us-gov-east-1")->{partition},"aws-us-gov", "valid_region: reports the resolved partition"
+assert_eq AWS::valid_region("xx-east-1")->{valid}, 0,     "valid_region: rejects an unknown geography"
+assert_eq AWS::valid_region("us-east")->{valid}, 0,       "valid_region: rejects a missing number segment"
+assert_eq AWS::valid_region("us-east-one")->{valid}, 0,   "valid_region: rejects a non-numeric trailer"
+assert_ok defined(AWS::valid_region("xx-east-1")->{reason}), "valid_region: invalid carries a reason"
+
 # dns_suffix_for_partition: partition → endpoint DNS suffix (botocore).
 assert_eq AWS::dns_suffix_for_partition("aws")->{dns_suffix},        "amazonaws.com",     "dns_suffix: standard"
 assert_eq AWS::dns_suffix_for_partition("aws-cn")->{dns_suffix},     "amazonaws.com.cn",  "dns_suffix: China"
