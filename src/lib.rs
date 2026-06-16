@@ -1527,6 +1527,62 @@ fn op_dns_suffix_for_partition(opts: Value) -> Result<Value> {
     Ok(json!({"partition": partition, "dns_suffix": suffix}))
 }
 
+/// Percent-encode an S3 object key for a URL path per RFC 3986: unreserved
+/// characters (`A-Za-z0-9-._~`) and the path separator `/` pass through; every
+/// other byte becomes `%XX` (uppercase hex).
+fn encode_s3_key(key: &str) -> String {
+    let mut out = String::with_capacity(key.len());
+    for &b in key.as_bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+/// Build the virtual-hosted–style HTTPS URL for an S3 object, per the AWS S3
+/// user guide: `https://<bucket>.s3.<region>.<dns_suffix>/<key>`. The region's
+/// partition and DNS suffix are resolved the same way as `service_endpoint`, so
+/// it works across aws/aws-cn/aws-us-gov/iso (`amazonaws.com.cn` etc.). The key
+/// is percent-encoded (unreserved chars and `/` pass through) and any leading
+/// slash trimmed; omit `key` for the bucket root. opts: `bucket`, `region`,
+/// optional `key`. Returns `{url, bucket, region, partition, host}`. Pure.
+fn op_s3_object_url(opts: Value) -> Result<Value> {
+    let bucket = opts
+        .get("bucket")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("missing bucket"))?;
+    let region = opts
+        .get("region")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("missing region"))?;
+    let partition = partition_of(region);
+    let dns_suffix = dns_suffix_of(partition)
+        .ok_or_else(|| anyhow!("no DNS suffix for partition `{partition}`"))?;
+    let host = format!("{bucket}.s3.{region}.{dns_suffix}");
+    let key = opts
+        .get("key")
+        .and_then(Value::as_str)
+        .map(|k| k.trim_start_matches('/'))
+        .filter(|k| !k.is_empty());
+    let url = match key {
+        Some(k) => format!("https://{host}/{}", encode_s3_key(k)),
+        None => format!("https://{host}"),
+    };
+    Ok(json!({
+        "url": url,
+        "bucket": bucket,
+        "region": region,
+        "partition": partition,
+        "host": host,
+    }))
+}
+
 /// Derive the AWS region from an availability-zone name. A standard AZ is the
 /// region followed by a single zone letter (`us-east-1a` → `us-east-1`,
 /// `eu-west-2c` → `eu-west-2`), so the region is the AZ with that trailing
@@ -1828,6 +1884,11 @@ pub extern "C" fn aws__dns_suffix_for_partition(args: *const c_char) -> *const c
 #[no_mangle]
 pub extern "C" fn aws__service_endpoint(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_service_endpoint(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_object_url(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_s3_object_url(opts) })
 }
 
 #[no_mangle]
@@ -2595,5 +2656,51 @@ mod ffi_tests {
         assert!(op_region_for_az(json!({"az": "us-east-1"})).is_err());
         assert!(op_region_for_az(json!({"az": "us-east-1A"})).is_err());
         assert!(op_region_for_az(json!({})).is_err());
+    }
+
+    #[test]
+    fn s3_object_url_builds_virtual_hosted_style() {
+        // The documented form: https://<bucket>.s3.<region>.<dns_suffix>/<key>.
+        let v = op_s3_object_url(json!({
+            "bucket": "amzn-s3-demo-bucket1", "region": "us-west-2", "key": "puppy.png",
+        }))
+        .unwrap();
+        assert_eq!(
+            v["url"],
+            json!("https://amzn-s3-demo-bucket1.s3.us-west-2.amazonaws.com/puppy.png")
+        );
+        assert_eq!(
+            v["host"],
+            json!("amzn-s3-demo-bucket1.s3.us-west-2.amazonaws.com")
+        );
+        assert_eq!(v["partition"], json!("aws"));
+        // No key → bucket root, no trailing slash.
+        assert_eq!(
+            op_s3_object_url(json!({"bucket": "b", "region": "eu-west-1"})).unwrap()["url"],
+            json!("https://b.s3.eu-west-1.amazonaws.com")
+        );
+        // A leading slash on the key is trimmed.
+        assert_eq!(
+            op_s3_object_url(json!({"bucket": "b", "region": "us-east-1", "key": "/a/b.txt"}))
+                .unwrap()["url"],
+            json!("https://b.s3.us-east-1.amazonaws.com/a/b.txt")
+        );
+        // The key is percent-encoded; `/` is preserved as a path separator.
+        assert_eq!(
+            op_s3_object_url(
+                json!({"bucket": "b", "region": "us-east-1", "key": "my dir/file (1).png"})
+            )
+            .unwrap()["url"],
+            json!("https://b.s3.us-east-1.amazonaws.com/my%20dir/file%20%281%29.png")
+        );
+        // China partition's DNS suffix is honored.
+        assert_eq!(
+            op_s3_object_url(json!({"bucket": "b", "region": "cn-north-1", "key": "k"})).unwrap()
+                ["url"],
+            json!("https://b.s3.cn-north-1.amazonaws.com.cn/k")
+        );
+        // Missing bucket/region reject.
+        assert!(op_s3_object_url(json!({"region": "us-east-1"})).is_err());
+        assert!(op_s3_object_url(json!({"bucket": "b"})).is_err());
     }
 }

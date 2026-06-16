@@ -153,6 +153,13 @@ assert_eq AWS::service_endpoint("ec2", "us-gov-west-1")->{endpoint}, "ec2.us-gov
 assert_eq AWS::service_endpoint("s3", "us-iso-east-1")->{partition}, "aws-iso", "service_endpoint: ISO partition resolved"
 assert_dies fn { AWS::service_endpoint("s3", "") }, "service_endpoint: requires a region"
 
+# s3_object_url: virtual-hosted-style HTTPS URL.
+assert_eq AWS::s3_object_url("amzn-s3-demo-bucket1", "us-west-2", "puppy.png")->{url}, "https://amzn-s3-demo-bucket1.s3.us-west-2.amazonaws.com/puppy.png", "s3_object_url: virtual-hosted form"
+assert_eq AWS::s3_object_url("b", "eu-west-1")->{url}, "https://b.s3.eu-west-1.amazonaws.com", "s3_object_url: bucket root, no trailing slash"
+assert_eq AWS::s3_object_url("b", "us-east-1", "my dir/x (1).png")->{url}, "https://b.s3.us-east-1.amazonaws.com/my%20dir/x%20%281%29.png", "s3_object_url: key percent-encoded, / preserved"
+assert_eq AWS::s3_object_url("b", "cn-north-1", "k")->{url}, "https://b.s3.cn-north-1.amazonaws.com.cn/k", "s3_object_url: China DNS suffix"
+assert_dies fn { AWS::s3_object_url("b", "") }, "s3_object_url: requires a region"
+
 # region_for_az: AWS AZ → region (strip the trailing zone letter).
 val $az = AWS::region_for_az("us-east-1a")
 assert_eq $az->{region},      "us-east-1", "region_for_az: us-east-1a → us-east-1"
