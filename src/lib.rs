@@ -1443,12 +1443,10 @@ fn op_valid_bucket_name(opts: Value) -> Result<Value> {
 /// Secret regions don't fall into the Secret partition. ARN building needs the
 /// right partition. opts: `region` (required). Returns `{region, partition}`.
 /// Pure.
-fn op_partition_for_region(opts: Value) -> Result<Value> {
-    let region = opts
-        .get("region")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("missing region"))?;
-    let partition = if region.starts_with("cn-") {
+/// The AWS partition a region belongs to, by region-name prefix. Single source
+/// of truth for `op_partition_for_region` and `op_service_endpoint`.
+fn partition_of(region: &str) -> &'static str {
+    if region.starts_with("cn-") {
         "aws-cn"
     } else if region.starts_with("us-gov-") {
         "aws-us-gov"
@@ -1458,8 +1456,59 @@ fn op_partition_for_region(opts: Value) -> Result<Value> {
         "aws-iso"
     } else {
         "aws"
-    };
-    Ok(json!({"region": region, "partition": partition}))
+    }
+}
+
+/// The DNS suffix for a partition, from botocore's `partitions.json`. Single
+/// source of truth for `op_dns_suffix_for_partition` and `op_service_endpoint`.
+fn dns_suffix_of(partition: &str) -> Option<&'static str> {
+    match partition {
+        "aws" => Some("amazonaws.com"),
+        "aws-cn" => Some("amazonaws.com.cn"),
+        "aws-us-gov" => Some("amazonaws.com"),
+        "aws-iso" => Some("c2s.ic.gov"),
+        "aws-iso-b" => Some("sc2s.sgov.gov"),
+        _ => None,
+    }
+}
+
+fn op_partition_for_region(opts: Value) -> Result<Value> {
+    let region = opts
+        .get("region")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing region"))?;
+    Ok(json!({"region": region, "partition": partition_of(region)}))
+}
+
+/// Build a regional service endpoint hostname `<service>.<region>.<dns_suffix>`
+/// — the canonical AWS endpoint form (e.g. `s3.us-east-1.amazonaws.com`,
+/// `dynamodb.cn-north-1.amazonaws.com.cn`). Resolves the region's partition and
+/// its DNS suffix internally, so it works across aws/aws-cn/aws-us-gov/iso.
+/// opts: `service`, `region`. Returns `{service, region, partition, dns_suffix,
+/// endpoint, url}`. Pure.
+fn op_service_endpoint(opts: Value) -> Result<Value> {
+    let service = opts
+        .get("service")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("missing service"))?;
+    let region = opts
+        .get("region")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| anyhow!("missing region"))?;
+    let partition = partition_of(region);
+    let dns_suffix = dns_suffix_of(partition)
+        .ok_or_else(|| anyhow!("no DNS suffix for partition `{partition}`"))?;
+    let endpoint = format!("{service}.{region}.{dns_suffix}");
+    Ok(json!({
+        "service": service,
+        "region": region,
+        "partition": partition,
+        "dns_suffix": dns_suffix,
+        "endpoint": endpoint,
+        "url": format!("https://{endpoint}"),
+    }))
 }
 
 /// The DNS suffix for an AWS partition — the domain its service endpoints live
@@ -1473,14 +1522,8 @@ fn op_dns_suffix_for_partition(opts: Value) -> Result<Value> {
         .get("partition")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow!("missing partition"))?;
-    let suffix = match partition {
-        "aws" => "amazonaws.com",
-        "aws-cn" => "amazonaws.com.cn",
-        "aws-us-gov" => "amazonaws.com",
-        "aws-iso" => "c2s.ic.gov",
-        "aws-iso-b" => "sc2s.sgov.gov",
-        other => return Err(anyhow!("unknown partition `{other}`")),
-    };
+    let suffix =
+        dns_suffix_of(partition).ok_or_else(|| anyhow!("unknown partition `{partition}`"))?;
     Ok(json!({"partition": partition, "dns_suffix": suffix}))
 }
 
@@ -1754,6 +1797,11 @@ pub extern "C" fn aws__dns_suffix_for_partition(args: *const c_char) -> *const c
         args,
         |opts| async move { op_dns_suffix_for_partition(opts) },
     )
+}
+
+#[no_mangle]
+pub extern "C" fn aws__service_endpoint(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_service_endpoint(opts) })
 }
 
 #[cfg(test)]
@@ -2467,5 +2515,35 @@ mod ffi_tests {
         // Unknown partition and missing input reject.
         assert!(op_dns_suffix_for_partition(json!({"partition": "aws-mars"})).is_err());
         assert!(op_dns_suffix_for_partition(json!({})).is_err());
+    }
+
+    #[test]
+    fn service_endpoint_builds_regional_hostnames_across_partitions() {
+        // Standard commercial partition.
+        let v = op_service_endpoint(json!({"service": "s3", "region": "us-east-1"})).unwrap();
+        assert_eq!(v["endpoint"], json!("s3.us-east-1.amazonaws.com"));
+        assert_eq!(v["url"], json!("https://s3.us-east-1.amazonaws.com"));
+        assert_eq!(v["partition"], json!("aws"));
+        assert_eq!(v["dns_suffix"], json!("amazonaws.com"));
+        // China partition uses amazonaws.com.cn.
+        assert_eq!(
+            op_service_endpoint(json!({"service": "dynamodb", "region": "cn-north-1"})).unwrap()
+                ["endpoint"],
+            json!("dynamodb.cn-north-1.amazonaws.com.cn")
+        );
+        // GovCloud + ISO partitions.
+        assert_eq!(
+            op_service_endpoint(json!({"service": "ec2", "region": "us-gov-west-1"})).unwrap()
+                ["endpoint"],
+            json!("ec2.us-gov-west-1.amazonaws.com")
+        );
+        assert_eq!(
+            op_service_endpoint(json!({"service": "s3", "region": "us-iso-east-1"})).unwrap()
+                ["endpoint"],
+            json!("s3.us-iso-east-1.c2s.ic.gov")
+        );
+        // Missing service/region reject.
+        assert!(op_service_endpoint(json!({"region": "us-east-1"})).is_err());
+        assert!(op_service_endpoint(json!({"service": "s3"})).is_err());
     }
 }

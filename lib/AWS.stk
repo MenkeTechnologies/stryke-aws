@@ -444,3 +444,11 @@ fn AWS::dns_suffix_for_partition ($partition) {
     AWS::_decode("dns_suffix_for_partition", aws__dns_suffix_for_partition(to_json({ partition => $partition })))
 }
 
+## Build a regional service endpoint hostname <service>.<region>.<dns_suffix>
+## (e.g. s3.us-east-1.amazonaws.com), resolving the region's partition + DNS
+## suffix internally so it works across aws/aws-cn/aws-us-gov/iso. Returns a
+## hashref { service, region, partition, dns_suffix, endpoint, url }.
+fn AWS::service_endpoint ($service, $region) {
+    AWS::_decode("service_endpoint", aws__service_endpoint(to_json({ service => $service, region => $region })))
+}
+

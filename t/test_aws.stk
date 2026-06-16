@@ -145,4 +145,12 @@ assert_eq AWS::dns_suffix_for_partition("aws-iso-b")->{dns_suffix},  "sc2s.sgov.
 assert_eq AWS::dns_suffix_for_partition(AWS::partition_for_region("cn-north-1")->{partition})->{dns_suffix}, "amazonaws.com.cn", "dns_suffix: region → partition → suffix"
 assert_dies fn { AWS::dns_suffix_for_partition("aws-mars") }, "dns_suffix: rejects an unknown partition"
 
+# service_endpoint: <service>.<region>.<dns_suffix> across partitions.
+assert_eq AWS::service_endpoint("s3", "us-east-1")->{endpoint}, "s3.us-east-1.amazonaws.com", "service_endpoint: commercial"
+assert_eq AWS::service_endpoint("s3", "us-east-1")->{url}, "https://s3.us-east-1.amazonaws.com", "service_endpoint: https url"
+assert_eq AWS::service_endpoint("dynamodb", "cn-north-1")->{endpoint}, "dynamodb.cn-north-1.amazonaws.com.cn", "service_endpoint: China suffix"
+assert_eq AWS::service_endpoint("ec2", "us-gov-west-1")->{endpoint}, "ec2.us-gov-west-1.amazonaws.com", "service_endpoint: GovCloud"
+assert_eq AWS::service_endpoint("s3", "us-iso-east-1")->{partition}, "aws-iso", "service_endpoint: ISO partition resolved"
+assert_dies fn { AWS::service_endpoint("s3", "") }, "service_endpoint: requires a region"
+
 test_run
