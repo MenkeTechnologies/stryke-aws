@@ -437,6 +437,15 @@ fn AWS::valid_account_id ($account_id) {
     AWS::_decode("valid_account_id", aws__valid_account_id(to_json({ account_id => $account_id })))
 }
 
+## Validate an ARN's structure as a non-throwing predicate — the { valid, reason }
+## companion of parse_arn (which throws and returns the components). Checks the 6
+## colon-delimited fields, the "arn" prefix, and a non-empty partition/service/
+## resource (region and account may be empty). Returns { arn, valid, reason }
+## (reason undef when valid).
+fn AWS::valid_arn ($arn) {
+    AWS::_decode("valid_arn", aws__valid_arn(to_json({ arn => $arn })))
+}
+
 ## Resolve the ARN partition for an AWS region: cn-* → aws-cn, us-gov-* →
 ## aws-us-gov, us-isob-* → aws-iso-b, us-iso-* → aws-iso, else aws. Returns a
 ## hashref { region, partition }. Feed the partition into build_arn.

@@ -265,6 +265,7 @@ AWS::s3_uri_to_arn($uri, $partition?) → { arn, bucket, key }   # s3://b/k → 
 AWS::arn_to_s3_uri($arn)     → { uri, bucket, key }   # arn:aws:s3:::b/k → s3://b/k; inverse of s3_uri_to_arn
 AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming rules
 AWS::valid_account_id($id)   → { account_id, valid, reason }   # exactly 12 decimal digits (leading zeros allowed)
+AWS::valid_arn($arn)         → { arn, valid, reason }          # non-throwing structure check: 6 fields, arn prefix, non-empty partition/service/resource
 AWS::partition_for_region($r) → { region, partition }   # cn-*→aws-cn, us-gov-*→aws-us-gov, us-iso(b)-*→aws-iso(-b), else aws
 AWS::dns_suffix_for_partition($p) → { partition, dns_suffix }   # aws→amazonaws.com, aws-cn→amazonaws.com.cn, aws-iso→c2s.ic.gov, … (botocore)
 AWS::service_endpoint($svc, $region) → { service, region, partition, dns_suffix, endpoint, url }   # <svc>.<region>.<dns_suffix> (s3.us-east-1.amazonaws.com)

@@ -1459,6 +1459,36 @@ fn op_valid_account_id(opts: Value) -> Result<Value> {
     Ok(json!({"account_id": id, "valid": reason.is_none(), "reason": reason}))
 }
 
+/// Validate the structure of an ARN as a non-throwing predicate — the
+/// `{valid, reason}` companion of `parse_arn` (which throws and returns the
+/// components). An ARN is `arn:partition:service:region:account:resource`: six
+/// `:`-delimited fields (the resource may itself contain `:`), the literal `arn`
+/// prefix, and a non-empty partition, service, and resource. Region and account
+/// may be empty (as in `arn:aws:s3:::bucket` or an IAM ARN). opts: `arn`
+/// (required). Returns `{arn, valid, reason}`. Pure.
+fn op_valid_arn(opts: Value) -> Result<Value> {
+    let arn = opts
+        .get("arn")
+        .or_else(|| opts.get("value"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing arn"))?;
+    let parts: Vec<&str> = arn.splitn(6, ':').collect();
+    let reason: Option<&str> = if parts.len() < 6 {
+        Some("must have 6 colon-delimited fields (arn:partition:service:region:account:resource)")
+    } else if parts[0] != "arn" {
+        Some("must begin with the literal `arn`")
+    } else if parts[1].is_empty() {
+        Some("partition (field 2) must not be empty")
+    } else if parts[2].is_empty() {
+        Some("service (field 3) must not be empty")
+    } else if parts[5].is_empty() {
+        Some("resource (field 6) must not be empty")
+    } else {
+        None
+    };
+    Ok(json!({"arn": arn, "valid": reason.is_none(), "reason": reason}))
+}
+
 /// Resolve the ARN partition for an AWS region. AWS groups regions into five
 /// partitions: `aws-cn` (`cn-*`), `aws-us-gov` (`us-gov-*`), `aws-iso-b`
 /// (`us-isob-*`, Top Secret), `aws-iso` (`us-iso-*`, Secret), and `aws` for
@@ -2039,6 +2069,11 @@ pub extern "C" fn aws__valid_bucket_name(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__valid_account_id(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_valid_account_id(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__valid_arn(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_valid_arn(opts) })
 }
 
 #[no_mangle]
@@ -2768,6 +2803,43 @@ mod ffi_tests {
             json!(true)
         );
         assert!(op_valid_account_id(json!({})).is_err());
+    }
+
+    #[test]
+    fn valid_arn_checks_the_six_field_structure() {
+        let ok = |arn: &str| {
+            op_valid_arn(json!({ "arn": arn })).unwrap()["valid"]
+                .as_bool()
+                .unwrap()
+        };
+        // Fully-populated ARN, and the legitimately-empty region/account forms.
+        assert!(ok("arn:aws:iam::123456789012:user/bob"));
+        assert!(ok("arn:aws:s3:::my-bucket"));
+        assert!(ok("arn:aws-cn:ec2:cn-north-1:123456789012:instance/i-0abc"));
+        // The resource may itself contain colons (splitn keeps it whole).
+        assert!(ok("arn:aws:lambda:us-east-1:123456789012:function:my-fn:1"));
+        // Each structural violation is reported with a reason.
+        for (arn, want) in [
+            ("aws:iam::123:user/x", "6 colon-delimited fields"), // no `arn` and only 5 fields
+            ("xyz:aws:s3:::b", "literal `arn`"),
+            ("arn::s3:::b", "partition"),
+            ("arn:aws::us-east-1:123:r", "service"),
+            ("arn:aws:s3:::", "resource"),
+        ] {
+            let v = op_valid_arn(json!({ "arn": arn })).unwrap();
+            assert_eq!(v["valid"], json!(false), "{arn:?} should be invalid");
+            assert!(
+                v["reason"].as_str().unwrap().contains(want),
+                "{arn:?}: reason `{}` should mention `{want}`",
+                v["reason"]
+            );
+        }
+        // `value` alias + missing-arg error.
+        assert_eq!(
+            op_valid_arn(json!({"value": "arn:aws:s3:::b"})).unwrap()["valid"],
+            json!(true)
+        );
+        assert!(op_valid_arn(json!({})).is_err());
     }
 
     #[test]

@@ -136,6 +136,15 @@ assert_eq $short->{valid}, 0, "valid_account_id: rejects the wrong length"
 assert_match qr/12 digits/, $short->{reason}, "valid_account_id: reason names the rule"
 assert_eq AWS::valid_account_id("12345678901a")->{valid}, 0, "valid_account_id: rejects non-digits"
 
+# valid_arn: structural ARN predicate (non-throwing companion of parse_arn).
+assert_ok AWS::valid_arn("arn:aws:iam::123456789012:user/bob")->{valid}, "valid_arn: empty region is legal"
+assert_ok AWS::valid_arn("arn:aws:s3:::my-bucket")->{valid},             "valid_arn: empty region+account (s3) is legal"
+assert_ok AWS::valid_arn("arn:aws:lambda:us-east-1:123456789012:function:fn:1")->{valid}, "valid_arn: resource may contain colons"
+val $bad = AWS::valid_arn("xyz:aws:s3:::b")
+assert_eq $bad->{valid}, 0, "valid_arn: rejects a missing arn prefix"
+assert_match qr/literal `arn`/, $bad->{reason}, "valid_arn: reason names the rule"
+assert_eq AWS::valid_arn("arn:aws:s3:::")->{valid}, 0, "valid_arn: rejects an empty resource"
+
 # partition_for_region: region → ARN partition.
 assert_eq AWS::partition_for_region("us-east-1")->{partition},    "aws",        "partition_for_region: standard region"
 assert_eq AWS::partition_for_region("cn-north-1")->{partition},   "aws-cn",     "partition_for_region: China"

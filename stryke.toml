@@ -1,6 +1,6 @@
 [package]
 name = "stryke-aws"
-version = "0.14.0"
+version = "0.15.0"
 description = "AWS client (S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter Store, Secrets Manager) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region."
 authors = ["MenkeTechnologies"]
 license = "MIT"
@@ -63,6 +63,7 @@ exports = [
     "aws__arn_to_s3_uri",
     "aws__valid_bucket_name",
     "aws__valid_account_id",
+    "aws__valid_arn",
     "aws__partition_for_region",
     "aws__dns_suffix_for_partition",
     "aws__service_endpoint",
