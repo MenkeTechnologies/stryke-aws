@@ -153,6 +153,17 @@ assert_eq AWS::service_endpoint("ec2", "us-gov-west-1")->{endpoint}, "ec2.us-gov
 assert_eq AWS::service_endpoint("s3", "us-iso-east-1")->{partition}, "aws-iso", "service_endpoint: ISO partition resolved"
 assert_dies fn { AWS::service_endpoint("s3", "") }, "service_endpoint: requires a region"
 
+# parse_service_endpoint: inverse of service_endpoint.
+val $pse = AWS::parse_service_endpoint("s3.us-east-1.amazonaws.com")
+assert_eq $pse->{service},   "s3",        "parse_service_endpoint: service extracted"
+assert_eq $pse->{region},    "us-east-1", "parse_service_endpoint: region extracted"
+assert_eq $pse->{partition}, "aws",       "parse_service_endpoint: partition resolved"
+# Full URL with a path resolves to the same host (China partition).
+assert_eq AWS::parse_service_endpoint("https://dynamodb.cn-north-1.amazonaws.com.cn/foo")->{partition}, "aws-cn", "parse_service_endpoint: strips scheme/path, China partition"
+# Round-trips service_endpoint.
+assert_eq AWS::parse_service_endpoint(AWS::service_endpoint("ec2", "us-gov-west-1")->{endpoint})->{region}, "us-gov-west-1", "parse_service_endpoint: round-trips service_endpoint"
+assert_dies fn { AWS::parse_service_endpoint("s3.us-east-1.example.com") }, "parse_service_endpoint: rejects an unknown suffix"
+
 # s3_object_url: virtual-hosted-style HTTPS URL.
 assert_eq AWS::s3_object_url("amzn-s3-demo-bucket1", "us-west-2", "puppy.png")->{url}, "https://amzn-s3-demo-bucket1.s3.us-west-2.amazonaws.com/puppy.png", "s3_object_url: virtual-hosted form"
 assert_eq AWS::s3_object_url("b", "eu-west-1")->{url}, "https://b.s3.eu-west-1.amazonaws.com", "s3_object_url: bucket root, no trailing slash"

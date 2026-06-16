@@ -1511,6 +1511,47 @@ fn op_service_endpoint(opts: Value) -> Result<Value> {
     }))
 }
 
+/// Parse a regional service endpoint back into its parts — the inverse of
+/// `service_endpoint`. Accepts a bare host (`s3.us-east-1.amazonaws.com`) or a
+/// full URL (scheme and any path stripped). The host splits into
+/// `<service>.<region>.<dns_suffix>`; the suffix is matched against the known
+/// partition suffixes and the region's partition resolved from it. opts:
+/// `endpoint` (or `url`). Returns `{endpoint, service, region, partition,
+/// dns_suffix, url}`. Pure.
+fn op_parse_service_endpoint(opts: Value) -> Result<Value> {
+    let raw = opts
+        .get("endpoint")
+        .or_else(|| opts.get("url"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing endpoint"))?;
+    let host = raw
+        .strip_prefix("https://")
+        .or_else(|| raw.strip_prefix("http://"))
+        .unwrap_or(raw);
+    let host = host.split(['/', '?']).next().unwrap_or(host);
+    let (service, rest) = host
+        .split_once('.')
+        .ok_or_else(|| anyhow!("not a service endpoint host `{host}`"))?;
+    if service.is_empty() {
+        return Err(anyhow!("service endpoint has no service: `{host}`"));
+    }
+    let (region, suffix) = split_s3_endpoint(rest)
+        .map_err(|_| anyhow!("unrecognized service endpoint host `{host}`"))?;
+    if region.is_empty() {
+        return Err(anyhow!("service endpoint has no region: `{host}`"));
+    }
+    let partition = partition_of(&region);
+    let endpoint = format!("{service}.{region}.{suffix}");
+    Ok(json!({
+        "endpoint": endpoint,
+        "service": service,
+        "region": region,
+        "partition": partition,
+        "dns_suffix": suffix,
+        "url": format!("https://{endpoint}"),
+    }))
+}
+
 /// The DNS suffix for an AWS partition — the domain its service endpoints live
 /// under, from botocore's `partitions.json`: `aws` → `amazonaws.com`, `aws-cn` →
 /// `amazonaws.com.cn`, `aws-us-gov` → `amazonaws.com`, `aws-iso` → `c2s.ic.gov`,
@@ -1988,6 +2029,11 @@ pub extern "C" fn aws__dns_suffix_for_partition(args: *const c_char) -> *const c
 #[no_mangle]
 pub extern "C" fn aws__service_endpoint(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_service_endpoint(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__parse_service_endpoint(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_parse_service_endpoint(opts) })
 }
 
 #[no_mangle]
@@ -2746,6 +2792,56 @@ mod ffi_tests {
         // Missing service/region reject.
         assert!(op_service_endpoint(json!({"region": "us-east-1"})).is_err());
         assert!(op_service_endpoint(json!({"service": "s3"})).is_err());
+    }
+
+    #[test]
+    fn parse_service_endpoint_inverts_service_endpoint() {
+        // Bare host: every part recovered.
+        let v =
+            op_parse_service_endpoint(json!({"endpoint": "s3.us-east-1.amazonaws.com"})).unwrap();
+        assert_eq!(v["service"], json!("s3"));
+        assert_eq!(v["region"], json!("us-east-1"));
+        assert_eq!(v["partition"], json!("aws"));
+        assert_eq!(v["dns_suffix"], json!("amazonaws.com"));
+        assert_eq!(v["url"], json!("https://s3.us-east-1.amazonaws.com"));
+        // A full URL with a path resolves to the same host.
+        assert_eq!(
+            op_parse_service_endpoint(
+                json!({"url": "https://dynamodb.cn-north-1.amazonaws.com.cn/"})
+            )
+            .unwrap()["partition"],
+            json!("aws-cn")
+        );
+        // Round-trips service_endpoint across every partition.
+        for (service, region) in [
+            ("s3", "us-east-1"),
+            ("dynamodb", "cn-north-1"),
+            ("ec2", "us-gov-west-1"),
+            ("s3", "us-iso-east-1"),
+        ] {
+            let built = op_service_endpoint(json!({"service": service, "region": region})).unwrap()
+                ["endpoint"]
+                .as_str()
+                .unwrap()
+                .to_string();
+            let p = op_parse_service_endpoint(json!({ "endpoint": built })).unwrap();
+            assert_eq!(
+                p["service"],
+                json!(service),
+                "service round-trip {service}/{region}"
+            );
+            assert_eq!(
+                p["region"],
+                json!(region),
+                "region round-trip {service}/{region}"
+            );
+        }
+        // Errors: not a host, unrecognized suffix, missing.
+        assert!(op_parse_service_endpoint(json!({"endpoint": "s3"})).is_err());
+        assert!(
+            op_parse_service_endpoint(json!({"endpoint": "s3.us-east-1.example.com"})).is_err()
+        );
+        assert!(op_parse_service_endpoint(json!({})).is_err());
     }
 
     #[test]

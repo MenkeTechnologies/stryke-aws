@@ -267,6 +267,7 @@ AWS::valid_bucket_name($n)   → { name, valid, reason }   # AWS bucket naming r
 AWS::partition_for_region($r) → { region, partition }   # cn-*→aws-cn, us-gov-*→aws-us-gov, us-iso(b)-*→aws-iso(-b), else aws
 AWS::dns_suffix_for_partition($p) → { partition, dns_suffix }   # aws→amazonaws.com, aws-cn→amazonaws.com.cn, aws-iso→c2s.ic.gov, … (botocore)
 AWS::service_endpoint($svc, $region) → { service, region, partition, dns_suffix, endpoint, url }   # <svc>.<region>.<dns_suffix> (s3.us-east-1.amazonaws.com)
+AWS::parse_service_endpoint($endpoint) → { endpoint, service, region, partition, dns_suffix, url }   # inverse of service_endpoint; host or URL → parts
 AWS::s3_object_url($bucket, $region, $key?) → { url, bucket, region, partition, host }   # virtual-hosted https URL: https://<bucket>.s3.<region>.<dns_suffix>/<key> (key percent-encoded)
 AWS::parse_s3_url($url)         → { url, bucket, key, region, partition, style, host, dns_suffix }   # inverse of s3_object_url; virtual-hosted + path styles; key percent-decoded
 AWS::region_for_az($az)         → { az, region, zone_letter }   # AZ → region (us-east-1a → us-east-1)

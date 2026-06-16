@@ -452,6 +452,15 @@ fn AWS::service_endpoint ($service, $region) {
     AWS::_decode("service_endpoint", aws__service_endpoint(to_json({ service => $service, region => $region })))
 }
 
+## Parse a regional service endpoint back into its parts — inverse of
+## service_endpoint. $endpoint may be a bare host (s3.us-east-1.amazonaws.com) or
+## a full URL (scheme and path stripped). The suffix is matched and the region's
+## partition resolved. Returns a hashref
+## { endpoint, service, region, partition, dns_suffix, url }.
+fn AWS::parse_service_endpoint ($endpoint) {
+    AWS::_decode("parse_service_endpoint", aws__parse_service_endpoint(to_json({ endpoint => $endpoint })))
+}
+
 ## Build the virtual-hosted-style HTTPS URL for an S3 object:
 ## https://<bucket>.s3.<region>.<dns_suffix>/<key>. Resolves the region's
 ## partition + DNS suffix internally (works across aws/aws-cn/gov/iso). $key is
