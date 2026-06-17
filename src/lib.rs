@@ -1548,6 +1548,58 @@ fn op_valid_arn(opts: Value) -> Result<Value> {
     Ok(json!({"arn": arn, "valid": reason.is_none(), "reason": reason}))
 }
 
+/// IAM-style wildcard match of `text` against `pattern`: `*` matches any sequence
+/// of characters (including none, and spanning `:`/`/` segment boundaries) and `?`
+/// matches exactly one character. Anchored (the whole string must match). Classic
+/// iterative glob with `*`-backtracking — byte-level, since ARNs are ASCII. Used
+/// by `arn_matches`.
+fn iam_glob_match(pattern: &[u8], text: &[u8]) -> bool {
+    let (mut p, mut t) = (0usize, 0usize);
+    let (mut star, mut star_t): (Option<usize>, usize) = (None, 0);
+    while t < text.len() {
+        if p < pattern.len() && (pattern[p] == b'?' || pattern[p] == text[t]) {
+            p += 1;
+            t += 1;
+        } else if p < pattern.len() && pattern[p] == b'*' {
+            star = Some(p);
+            star_t = t;
+            p += 1;
+        } else if let Some(sp) = star {
+            // Backtrack: let the last `*` consume one more character.
+            p = sp + 1;
+            star_t += 1;
+            t = star_t;
+        } else {
+            return false;
+        }
+    }
+    while p < pattern.len() && pattern[p] == b'*' {
+        p += 1;
+    }
+    p == pattern.len()
+}
+
+/// Test whether an `arn` matches an IAM policy ARN `pattern` with `*`/`?`
+/// wildcards — the resource-matching IAM does when evaluating a policy. `*`
+/// matches any run of characters (it spans `:` and `/`, so
+/// `arn:aws:s3:::bucket/*` matches every object key) and `?` matches one
+/// character; literals match exactly and case-sensitively. The whole ARN must
+/// match (anchored). opts: `pattern` (required), `arn` (or `value`, required).
+/// Returns `{pattern, arn, matches}`. Pure.
+fn op_arn_matches(opts: Value) -> Result<Value> {
+    let pattern = opts
+        .get("pattern")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing pattern"))?;
+    let arn = opts
+        .get("arn")
+        .or_else(|| opts.get("value"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow!("missing arn"))?;
+    let matches = iam_glob_match(pattern.as_bytes(), arn.as_bytes());
+    Ok(json!({"pattern": pattern, "arn": arn, "matches": matches}))
+}
+
 /// Resolve the ARN partition for an AWS region. AWS groups regions into five
 /// partitions: `aws-cn` (`cn-*`), `aws-us-gov` (`us-gov-*`), `aws-iso-b`
 /// (`us-isob-*`, Top Secret), `aws-iso` (`us-iso-*`, Secret), and `aws` for
@@ -2192,6 +2244,11 @@ pub extern "C" fn aws__valid_account_id(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__valid_arn(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_valid_arn(opts) })
+}
+
+#[no_mangle]
+pub extern "C" fn aws__arn_matches(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, |opts| async move { op_arn_matches(opts) })
 }
 
 #[no_mangle]
@@ -3030,6 +3087,44 @@ mod ffi_tests {
             json!(true)
         );
         assert!(op_valid_arn(json!({})).is_err());
+    }
+
+    #[test]
+    fn arn_matches_does_iam_wildcard_resource_matching() {
+        let m = |pattern: &str, arn: &str| {
+            op_arn_matches(json!({"pattern": pattern, "arn": arn})).unwrap()["matches"]
+                .as_bool()
+                .unwrap()
+        };
+        // An exact ARN matches itself.
+        assert!(m("arn:aws:s3:::bucket", "arn:aws:s3:::bucket"));
+        // `*` spans `/` — a bucket-wide pattern matches any object key.
+        assert!(m("arn:aws:s3:::bucket/*", "arn:aws:s3:::bucket/a/b/c.txt"));
+        // `*` is greedy across `:` segments too.
+        assert!(m("arn:aws:s3:*", "arn:aws:s3:::bucket"));
+        // The AWS-documented mid-pattern example: foo/*/bar spans extra segments.
+        assert!(m(
+            "arn:aws:s3:::my-bucket/foo/*/bar",
+            "arn:aws:s3:::my-bucket/foo/1/2/bar"
+        ));
+        // `?` matches exactly one character.
+        assert!(m(
+            "arn:aws:ec2:us-east-?:*:instance/*",
+            "arn:aws:ec2:us-east-1:123456789012:instance/i-0abc"
+        ));
+        assert!(!m("arn:aws:ec2:us-east-??:*", "arn:aws:ec2:us-east-1:1:r"));
+        // A non-match: different bucket; matching is anchored and case-sensitive.
+        assert!(!m("arn:aws:s3:::bucket/*", "arn:aws:s3:::other/key"));
+        assert!(!m("arn:aws:s3:::Bucket", "arn:aws:s3:::bucket"));
+        // A trailing literal after `*` must still be present.
+        assert!(!m("arn:aws:s3:::bucket/*.png", "arn:aws:s3:::bucket/a.txt"));
+        // `value` alias; missing args error.
+        assert_eq!(
+            op_arn_matches(json!({"pattern": "*", "value": "arn:aws:s3:::b"})).unwrap()["matches"],
+            json!(true)
+        );
+        assert!(op_arn_matches(json!({"pattern": "*"})).is_err());
+        assert!(op_arn_matches(json!({"arn": "x"})).is_err());
     }
 
     #[test]

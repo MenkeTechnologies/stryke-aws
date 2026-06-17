@@ -463,6 +463,15 @@ fn AWS::valid_arn ($arn) {
     AWS::_decode("valid_arn", aws__valid_arn(to_json({ arn => $arn })))
 }
 
+## Test whether $arn matches an IAM policy ARN $pattern with */? wildcards — the
+## resource matching IAM does when evaluating a policy. * matches any run of
+## characters (it spans : and /, so arn:aws:s3:::bucket/* matches every object
+## key) and ? matches one character; literals match exactly and case-sensitively.
+## The whole ARN must match. Returns { pattern, arn, matches }.
+fn AWS::arn_matches ($pattern, $arn) {
+    AWS::_decode("arn_matches", aws__arn_matches(to_json({ pattern => $pattern, arn => $arn })))
+}
+
 ## Resolve the ARN partition for an AWS region: cn-* → aws-cn, us-gov-* →
 ## aws-us-gov, us-isob-* → aws-iso-b, us-iso-* → aws-iso, else aws. Returns a
 ## hashref { region, partition }. Feed the partition into build_arn.

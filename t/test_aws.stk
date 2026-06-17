@@ -163,6 +163,14 @@ assert_eq $bad->{valid}, 0, "valid_arn: rejects a missing arn prefix"
 assert_match qr/literal `arn`/, $bad->{reason}, "valid_arn: reason names the rule"
 assert_eq AWS::valid_arn("arn:aws:s3:::")->{valid}, 0, "valid_arn: rejects an empty resource"
 
+# arn_matches: IAM-style */? wildcard matching of an ARN against a pattern.
+assert_eq AWS::arn_matches("arn:aws:s3:::bucket", "arn:aws:s3:::bucket")->{matches}, 1, "arn_matches: exact match"
+assert_eq AWS::arn_matches("arn:aws:s3:::bucket/*", "arn:aws:s3:::bucket/a/b/c.txt")->{matches}, 1, "arn_matches: * spans / (bucket-wide)"
+assert_eq AWS::arn_matches("arn:aws:s3:::my-bucket/foo/*/bar", "arn:aws:s3:::my-bucket/foo/1/2/bar")->{matches}, 1, "arn_matches: mid-pattern * spans extra segments"
+assert_eq AWS::arn_matches("arn:aws:ec2:us-east-?:*:instance/*", "arn:aws:ec2:us-east-1:123456789012:instance/i-0abc")->{matches}, 1, "arn_matches: ? matches one char, * matches segments"
+assert_eq AWS::arn_matches("arn:aws:s3:::bucket/*", "arn:aws:s3:::other/key")->{matches}, 0, "arn_matches: different bucket does not match"
+assert_eq AWS::arn_matches("arn:aws:s3:::Bucket", "arn:aws:s3:::bucket")->{matches}, 0, "arn_matches: matching is case-sensitive"
+
 # partition_for_region: region → ARN partition.
 assert_eq AWS::partition_for_region("us-east-1")->{partition},    "aws",        "partition_for_region: standard region"
 assert_eq AWS::partition_for_region("cn-north-1")->{partition},   "aws-cn",     "partition_for_region: China"
