@@ -99,8 +99,8 @@ use AWS::STS
 p to_json AWS::STS::caller_identity()
 
 # S3 — list, get, put, head, rm.
-my @keys = AWS::S3::ls "s3://my-bucket/prefix/", delimiter => "/"
-for my $e (@keys) {
+val @keys = AWS::S3::ls "s3://my-bucket/prefix/", delimiter => "/"
+for val $e (@keys) {
     p "$e->{type}: $e->{key}"
 }
 
@@ -115,15 +115,15 @@ p for AWS::Dynamo::tables()
 
 # SQS — send / long-poll / pump.
 AWS::SQS::send $queue_url, "payload"
-my @msgs = AWS::SQS::receive $queue_url, max => 10, wait => 20
+val @msgs = AWS::SQS::receive $queue_url, max => 10, wait => 20
 
 # pump = receive → callback → delete-on-success
-AWS::SQS::pump $queue_url, iterations => 5, callback => sub ($m) {
+AWS::SQS::pump $queue_url, iterations => 5, callback => fn ($m) {
     handle_message $m->{body}
 }
 
 # Lambda — invoke (sync or fire-and-forget).
-my $reply = AWS::Lambda::call "my-fn", { hello => "world" }
+val $reply = AWS::Lambda::call "my-fn", { hello => "world" }
 p to_json $reply
 ```
 
@@ -394,7 +394,7 @@ or extend the cdylib export list if you specifically need a typed set.
 ## [0x06] LocalStack / MinIO
 
 ```stryke
-my %ls = (endpoint => "http://localhost:4566", region => "us-east-1")
+val %ls = (endpoint => "http://localhost:4566", region => "us-east-1")
 AWS::S3::buckets(%ls) |> ep
 AWS::SQS::list(%ls)   |> ep
 ```
