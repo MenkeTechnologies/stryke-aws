@@ -112,6 +112,14 @@ exports = [
     "aws__sfn_list_state_machines",
     "aws__sfn_start_execution",
     "aws__sfn_describe_execution",
+    "aws__ddb_create_table",
+    "aws__ddb_delete_table",
+    "aws__ec2_reboot_instances",
+    "aws__iam_get_role",
+    "aws__logs_put_log_events",
+    "aws__s3_create_bucket",
+    "aws__s3_delete_bucket",
+    "aws__sns_delete_topic",
 ]
 
 [scripts]
