@@ -31,3 +31,8 @@ fn AWS::EC2::security_groups (%opts) {
 fn AWS::EC2::vpcs (%opts) {
     AWS::ec2_describe_vpcs(%opts)
 }
+
+## RebootInstances $ids (arrayref or single id). Returns the rebooted ids.
+fn AWS::EC2::reboot ($ids, %opts) {
+    AWS::ec2_reboot_instances($ids, %opts)
+}

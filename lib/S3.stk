@@ -94,3 +94,16 @@ fn AWS::S3::tags ($uri, %opts) {
     AWS::s3_get_bucket_tagging($bucket, %opts)
 }
 
+## CreateBucket for an s3:// URI (or bare "s3://bucket"). Returns
+## { bucket, location, created }.
+fn AWS::S3::mb ($uri, %opts) {
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    AWS::s3_create_bucket($bucket, %opts)
+}
+
+## DeleteBucket for an s3:// URI (bucket must be empty). Returns 1 on success.
+fn AWS::S3::rb ($uri, %opts) {
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    AWS::s3_delete_bucket($bucket, %opts)
+}
+

@@ -658,6 +658,69 @@ fn AWS::sfn_describe_execution ($execution_arn, %opts) {
     AWS::_decode("sfn_describe_execution", aws__sfn_describe_execution(to_json($r)))
 }
 
+# ── lifecycle ops (create/delete pairs + reboot + log writes) ───────────
+
+## CreateBucket named $bucket. The LocationConstraint is derived from the
+## effective region (omitted for us-east-1, where AWS rejects it). Returns
+## { bucket, location, created }.
+fn AWS::s3_create_bucket ($bucket, %opts) {
+    val $r = AWS::_req({ bucket => $bucket }, \%opts)
+    AWS::_decode("s3_create_bucket", aws__s3_create_bucket(to_json($r)))
+}
+
+## DeleteBucket $bucket (must be empty). Returns 1 on success.
+fn AWS::s3_delete_bucket ($bucket, %opts) {
+    val $r = AWS::_req({ bucket => $bucket }, \%opts)
+    AWS::_decode("s3_delete_bucket", aws__s3_delete_bucket(to_json($r)))->{deleted} ? 1 : 0
+}
+
+## CreateTable $table with a $hash_key (and optional opts.range_key). opts:
+## hash_key_type / range_key_type (S|N|B, default S). Always on-demand
+## (PAY_PER_REQUEST). Returns { table, arn, status, created }.
+fn AWS::ddb_create_table ($table, $hash_key, %opts) {
+    val $r = AWS::_req(
+        { table => $table, hash_key => $hash_key, hash_key_type => $opts{hash_key_type},
+          range_key => $opts{range_key}, range_key_type => $opts{range_key_type} }, \%opts)
+    AWS::_decode("ddb_create_table", aws__ddb_create_table(to_json($r)))
+}
+
+## DeleteTable $table. Returns { table, status, deleted }.
+fn AWS::ddb_delete_table ($table, %opts) {
+    val $r = AWS::_req({ table => $table }, \%opts)
+    AWS::_decode("ddb_delete_table", aws__ddb_delete_table(to_json($r)))
+}
+
+## DeleteTopic $topic_arn. Returns 1 on success.
+fn AWS::sns_delete_topic ($topic_arn, %opts) {
+    val $r = AWS::_req({ topic_arn => $topic_arn }, \%opts)
+    AWS::_decode("sns_delete_topic", aws__sns_delete_topic(to_json($r)))->{deleted} ? 1 : 0
+}
+
+## RebootInstances $instance_ids (arrayref or single id). Returns a list of the
+## instance ids the reboot was issued for.
+fn AWS::ec2_reboot_instances ($instance_ids, %opts) {
+    val $list = ref($instance_ids) eq "ARRAY" ? $instance_ids : [$instance_ids]
+    val $r = AWS::_req({ instance_ids => $list }, \%opts)
+    @{ AWS::_decode("ec2_reboot_instances", aws__ec2_reboot_instances(to_json($r)))->{instance_ids} }
+}
+
+## PutLogEvents into $log_stream of $log_group. $events is an arrayref of
+## { message, timestamp } (timestamp = epoch ms). opts: sequence_token. Returns
+## the next_sequence_token.
+fn AWS::logs_put_log_events ($log_group, $log_stream, $events, %opts) {
+    val $r = AWS::_req(
+        { log_group => $log_group, log_stream => $log_stream, events => $events,
+          sequence_token => $opts{sequence_token} }, \%opts)
+    AWS::_decode("logs_put_log_events", aws__logs_put_log_events(to_json($r)))->{next_sequence_token}
+}
+
+## GetRole $role_name — { role_name, role_id, arn, path, description,
+## max_session_duration }.
+fn AWS::iam_get_role ($role_name, %opts) {
+    val $r = AWS::_req({ role_name => $role_name }, \%opts)
+    AWS::_decode("iam_get_role", aws__iam_get_role(to_json($r)))
+}
+
 # ── pure helpers (no AWS) ─────────────────────────────────────────────
 
 ## Parse an ARN into a hashref { partition, service, region, account_id,

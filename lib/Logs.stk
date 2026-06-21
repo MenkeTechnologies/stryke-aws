@@ -26,3 +26,10 @@ fn AWS::Logs::filter ($log_group, %opts) {
 fn AWS::Logs::events ($log_group, $log_stream, %opts) {
     AWS::logs_get_log_events($log_group, $log_stream, %opts)
 }
+
+## PutLogEvents into $log_stream of $log_group. $events is an arrayref of
+## { message, timestamp } (timestamp = epoch ms). opts: sequence_token. Returns
+## the next_sequence_token.
+fn AWS::Logs::put ($log_group, $log_stream, $events, %opts) {
+    AWS::logs_put_log_events($log_group, $log_stream, $events, %opts)
+}

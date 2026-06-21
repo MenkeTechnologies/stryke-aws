@@ -222,6 +222,26 @@ assert_ok exists &AWS::StepFunctions::list, "AWS::StepFunctions::list exists"
 assert_ok exists &AWS::StepFunctions::start, "AWS::StepFunctions::start exists"
 assert_ok exists &AWS::StepFunctions::describe, "AWS::StepFunctions::describe exists"
 
+# ── lifecycle ops: flat ──
+assert_ok exists &AWS::s3_create_bucket, "AWS::s3_create_bucket exists"
+assert_ok exists &AWS::s3_delete_bucket, "AWS::s3_delete_bucket exists"
+assert_ok exists &AWS::ddb_create_table, "AWS::ddb_create_table exists"
+assert_ok exists &AWS::ddb_delete_table, "AWS::ddb_delete_table exists"
+assert_ok exists &AWS::sns_delete_topic, "AWS::sns_delete_topic exists"
+assert_ok exists &AWS::ec2_reboot_instances, "AWS::ec2_reboot_instances exists"
+assert_ok exists &AWS::logs_put_log_events, "AWS::logs_put_log_events exists"
+assert_ok exists &AWS::iam_get_role, "AWS::iam_get_role exists"
+
+# ── lifecycle ops: namespaced wrappers ──
+assert_ok exists &AWS::S3::mb, "AWS::S3::mb exists"
+assert_ok exists &AWS::S3::rb, "AWS::S3::rb exists"
+assert_ok exists &AWS::Dynamo::create, "AWS::Dynamo::create exists"
+assert_ok exists &AWS::Dynamo::drop, "AWS::Dynamo::drop exists"
+assert_ok exists &AWS::SNS::delete, "AWS::SNS::delete exists"
+assert_ok exists &AWS::EC2::reboot, "AWS::EC2::reboot exists"
+assert_ok exists &AWS::Logs::put, "AWS::Logs::put exists"
+assert_ok exists &AWS::IAM::role, "AWS::IAM::role exists"
+
 # ── S3.stk / Dynamo.stk / SQS.stk / Lambda.stk / SNS.stk / SSM.stk extras ──
 assert_ok exists &AWS::S3::versions, "AWS::S3::versions exists"
 assert_ok exists &AWS::S3::location, "AWS::S3::location exists"

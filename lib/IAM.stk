@@ -25,3 +25,9 @@ fn AWS::IAM::user (%opts) {
 fn AWS::IAM::role_policies ($role_name, %opts) {
     AWS::iam_list_attached_role_policies($role_name, %opts)
 }
+
+## GetRole $role_name — { role_name, role_id, arn, path, description,
+## max_session_duration }.
+fn AWS::IAM::role ($role_name, %opts) {
+    AWS::iam_get_role($role_name, %opts)
+}

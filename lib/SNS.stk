@@ -36,3 +36,8 @@ fn AWS::SNS::unsubscribe ($subscription_arn, %opts) {
 fn AWS::SNS::subscriptions ($topic_arn, %opts) {
     AWS::sns_list_subscriptions_by_topic($topic_arn, %opts)
 }
+
+## DeleteTopic $topic_arn. Returns 1 on success.
+fn AWS::SNS::delete ($topic_arn, %opts) {
+    AWS::sns_delete_topic($topic_arn, %opts)
+}

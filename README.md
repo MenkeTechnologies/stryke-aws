@@ -157,6 +157,8 @@ AWS::S3::buckets  %opts        → @buckets
 AWS::S3::versions $uri, %opts → \%resp        # { versions, delete_markers }
 AWS::S3::location $uri, %opts → \%resp        # { bucket, location_constraint, region }
 AWS::S3::tags     $uri, %opts → \%tags        # { key => value }
+AWS::S3::mb       $uri, %opts → \%resp        # CreateBucket; { bucket, location, created }
+AWS::S3::rb       $uri, %opts → 1 | 0         # DeleteBucket (bucket must be empty)
 ```
 
 `ls` entries: `{type=>"object", key, size, etag, last_modified,
@@ -174,6 +176,8 @@ AWS::Dynamo::describe     $table, %opts → \%info   # status, item_count, key_s
 AWS::Dynamo::tables       %opts → @names
 AWS::Dynamo::transact     %opts → $count           # opts: puts ([{table,item}]), deletes ([{table,key}]); atomic
 AWS::Dynamo::ttl          $table, %opts → \%info    # { status, attribute_name }
+AWS::Dynamo::create       $table, $hash_key, %opts → \%resp   # CreateTable (on-demand); opts: hash_key_type/range_key/range_key_type
+AWS::Dynamo::drop         $table, %opts → \%resp    # DeleteTable; { table, status, deleted }
 AWS::Dynamo::batch_write  $table, $rows, %opts → dies   # deferred in the cdylib
 AWS::Dynamo::scan_stream  $table, %opts → dies         # deferred in the cdylib
 ```
@@ -225,6 +229,7 @@ AWS::SNS::publish   $message, %opts → $message_id   # opts: topic_arn | target
 AWS::SNS::subscribe $topic_arn, $protocol, $endpoint, %opts → $subscription_arn
 AWS::SNS::unsubscribe   $subscription_arn, %opts → 1 | 0
 AWS::SNS::subscriptions $topic_arn, %opts → @{ {subscription_arn, protocol, endpoint, owner} }
+AWS::SNS::delete        $topic_arn, %opts → 1 | 0   # DeleteTopic
 ```
 
 ### `use AWS::SSM` (Parameter Store)
@@ -266,6 +271,7 @@ AWS::Logs::groups %opts → @groups                       # DescribeLogGroups; o
 AWS::Logs::create $name, %opts → 1                       # CreateLogGroup
 AWS::Logs::filter $log_group, %opts → @events           # opts: filter_pattern, start_time, end_time, limit
 AWS::Logs::events $log_group, $log_stream, %opts → @events   # opts: limit, start_from_head
+AWS::Logs::put    $log_group, $log_stream, $events, %opts → $next_token   # PutLogEvents; events: [{message, timestamp(ms)}]; opts: sequence_token
 ```
 
 ### `use AWS::EC2`
@@ -276,6 +282,7 @@ AWS::EC2::start           $ids, %opts → @changes        # StartInstances
 AWS::EC2::stop            $ids, %opts → @changes        # StopInstances; opts: force
 AWS::EC2::security_groups %opts → @groups               # opts: group_ids
 AWS::EC2::vpcs            %opts → @vpcs                  # opts: vpc_ids
+AWS::EC2::reboot          $ids, %opts → @ids            # RebootInstances
 ```
 
 ### `use AWS::KMS` (Key Management Service)
@@ -295,6 +302,7 @@ AWS::IAM::users         %opts → @users                  # ListUsers
 AWS::IAM::roles         %opts → @roles                  # ListRoles
 AWS::IAM::user          %opts → \%user                  # GetUser; opts: user_name
 AWS::IAM::role_policies $role_name, %opts → @{ {policy_name, policy_arn} }
+AWS::IAM::role          $role_name, %opts → \%role       # GetRole; { role_name, role_id, arn, path, description, max_session_duration }
 ```
 
 ### `use AWS::Kinesis`

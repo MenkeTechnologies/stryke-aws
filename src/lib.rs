@@ -2108,6 +2108,228 @@ async fn op_sfn_describe_execution(opts: Value) -> Result<Value> {
     }))
 }
 
+// ── surface expansion: lifecycle ops pairing with existing list/describe ──────
+
+async fn op_s3_create_bucket(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?
+        .to_string();
+    let mut req = client.create_bucket().bucket(&bucket);
+    // CreateBucket requires a LocationConstraint for every region EXCEPT
+    // us-east-1, where supplying one is an error. Resolve the effective region
+    // the same way `get_config` does so the constraint always matches the
+    // endpoint the request lands on.
+    let region = opts
+        .get("region")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+        .or_else(|| std::env::var("AWS_REGION").ok())
+        .or_else(|| std::env::var("AWS_DEFAULT_REGION").ok())
+        .unwrap_or_else(|| "us-east-1".to_string());
+    if region != "us-east-1" {
+        use aws_sdk_s3::types::{BucketLocationConstraint, CreateBucketConfiguration};
+        let constraint = CreateBucketConfiguration::builder()
+            .location_constraint(BucketLocationConstraint::from(region.as_str()))
+            .build();
+        req = req.create_bucket_configuration(constraint);
+    }
+    let r = req.send().await?;
+    Ok(json!({"bucket": bucket, "location": r.location(), "created": true}))
+}
+
+async fn op_s3_delete_bucket(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?
+        .to_string();
+    client.delete_bucket().bucket(&bucket).send().await?;
+    Ok(json!({"bucket": bucket, "deleted": true}))
+}
+
+async fn op_ddb_create_table(opts: Value) -> Result<Value> {
+    use aws_sdk_dynamodb::types::{
+        AttributeDefinition, BillingMode, KeySchemaElement, KeyType, ScalarAttributeType,
+    };
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let hash_key = opts["hash_key"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing hash_key"))?
+        .to_string();
+    // Attribute scalar type for each key: S (default), N, or B.
+    let scalar = |t: &str| -> Result<ScalarAttributeType> {
+        match t {
+            "S" => Ok(ScalarAttributeType::S),
+            "N" => Ok(ScalarAttributeType::N),
+            "B" => Ok(ScalarAttributeType::B),
+            other => Err(anyhow!("invalid key type {other} (want S, N, or B)")),
+        }
+    };
+    let hash_type = scalar(opts["hash_key_type"].as_str().unwrap_or("S"))?;
+    let mut req = client
+        .create_table()
+        .table_name(&table)
+        .attribute_definitions(
+            AttributeDefinition::builder()
+                .attribute_name(&hash_key)
+                .attribute_type(hash_type)
+                .build()?,
+        )
+        .key_schema(
+            KeySchemaElement::builder()
+                .attribute_name(&hash_key)
+                .key_type(KeyType::Hash)
+                .build()?,
+        );
+    if let Some(range_key) = opts["range_key"].as_str() {
+        let range_type = scalar(opts["range_key_type"].as_str().unwrap_or("S"))?;
+        req = req
+            .attribute_definitions(
+                AttributeDefinition::builder()
+                    .attribute_name(range_key)
+                    .attribute_type(range_type)
+                    .build()?,
+            )
+            .key_schema(
+                KeySchemaElement::builder()
+                    .attribute_name(range_key)
+                    .key_type(KeyType::Range)
+                    .build()?,
+            );
+    }
+    // Default to on-demand (PAY_PER_REQUEST) so callers need not size capacity.
+    req = req.billing_mode(BillingMode::PayPerRequest);
+    let r = req.send().await?;
+    let d = r.table_description();
+    Ok(json!({
+        "table": table,
+        "arn": d.and_then(|d| d.table_arn()),
+        "status": d.and_then(|d| d.table_status()).map(|s| s.as_str()),
+        "created": true,
+    }))
+}
+
+async fn op_ddb_delete_table(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let r = client.delete_table().table_name(&table).send().await?;
+    let d = r.table_description();
+    Ok(json!({
+        "table": table,
+        "status": d.and_then(|d| d.table_status()).map(|s| s.as_str()),
+        "deleted": true,
+    }))
+}
+
+async fn op_sns_delete_topic(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let topic_arn = opts["topic_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing topic_arn"))?
+        .to_string();
+    client.delete_topic().topic_arn(&topic_arn).send().await?;
+    Ok(json!({"topic_arn": topic_arn, "deleted": true}))
+}
+
+async fn op_ec2_reboot_instances(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ec2::Client::new(&cfg);
+    let ids = string_vec(&opts["instance_ids"])?;
+    if ids.is_empty() {
+        return Err(anyhow!("instance_ids must be a non-empty array"));
+    }
+    client
+        .reboot_instances()
+        .set_instance_ids(Some(ids.clone()))
+        .send()
+        .await?;
+    // RebootInstances returns no body; echo the requested ids so callers can
+    // confirm which instances the reboot was issued for.
+    Ok(json!({"instance_ids": ids, "rebooted": true}))
+}
+
+async fn op_logs_put_log_events(opts: Value) -> Result<Value> {
+    use aws_sdk_cloudwatchlogs::types::InputLogEvent;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatchlogs::Client::new(&cfg);
+    let group = opts["log_group"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing log_group"))?
+        .to_string();
+    let stream = opts["log_stream"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing log_stream"))?
+        .to_string();
+    let raw = opts["events"]
+        .as_array()
+        .ok_or_else(|| anyhow!("missing events (array of message+timestamp objects)"))?;
+    if raw.is_empty() {
+        return Err(anyhow!("events must be a non-empty array"));
+    }
+    let mut events: Vec<InputLogEvent> = Vec::with_capacity(raw.len());
+    for e in raw {
+        let message = e["message"]
+            .as_str()
+            .ok_or_else(|| anyhow!("each event needs a string message"))?;
+        let timestamp = e["timestamp"]
+            .as_i64()
+            .ok_or_else(|| anyhow!("each event needs an i64 timestamp (epoch ms)"))?;
+        events.push(
+            InputLogEvent::builder()
+                .message(message)
+                .timestamp(timestamp)
+                .build()?,
+        );
+    }
+    let mut req = client
+        .put_log_events()
+        .log_group_name(&group)
+        .log_stream_name(&stream)
+        .set_log_events(Some(events));
+    if let Some(token) = opts["sequence_token"].as_str() {
+        req = req.sequence_token(token);
+    }
+    let r = req.send().await?;
+    Ok(json!({
+        "log_group": group,
+        "log_stream": stream,
+        "next_sequence_token": r.next_sequence_token(),
+    }))
+}
+
+async fn op_iam_get_role(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_iam::Client::new(&cfg);
+    let role_name = opts["role_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing role_name"))?
+        .to_string();
+    let r = client.get_role().role_name(&role_name).send().await?;
+    let role = r.role();
+    Ok(json!({
+        "role_name": role.map(|r| r.role_name().to_string()),
+        "role_id": role.map(|r| r.role_id().to_string()),
+        "arn": role.map(|r| r.arn().to_string()),
+        "path": role.map(|r| r.path().to_string()),
+        "description": role.and_then(|r| r.description()),
+        "max_session_duration": role.and_then(|r| r.max_session_duration()),
+    }))
+}
+
 // ── FFI plumbing ────────────────────────────────────────────────────────────
 
 fn ffi_call_async<F, Fut>(args: *const c_char, handler: F) -> *const c_char
@@ -3422,6 +3644,46 @@ pub extern "C" fn aws__sfn_start_execution(args: *const c_char) -> *const c_char
 #[no_mangle]
 pub extern "C" fn aws__sfn_describe_execution(args: *const c_char) -> *const c_char {
     ffi_call_async(args, op_sfn_describe_execution)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_create_bucket(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_create_bucket)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_delete_bucket(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_delete_bucket)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_create_table(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_create_table)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_delete_table(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_delete_table)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_delete_topic(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_delete_topic)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ec2_reboot_instances(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ec2_reboot_instances)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__logs_put_log_events(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_logs_put_log_events)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__iam_get_role(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_iam_get_role)
 }
 
 #[cfg(test)]

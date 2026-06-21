@@ -66,3 +66,15 @@ fn AWS::Dynamo::ttl ($table, %opts) {
     AWS::ddb_describe_time_to_live($table, %opts)
 }
 
+## CreateTable $table with $hash_key. opts: hash_key_type/range_key_type
+## (S|N|B, default S), range_key. On-demand billing. Returns
+## { table, arn, status, created }.
+fn AWS::Dynamo::create ($table, $hash_key, %opts) {
+    AWS::ddb_create_table($table, $hash_key, %opts)
+}
+
+## DeleteTable $table — { table, status, deleted }.
+fn AWS::Dynamo::drop ($table, %opts) {
+    AWS::ddb_delete_table($table, %opts)
+}
+

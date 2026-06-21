@@ -15,6 +15,7 @@ use AWS::STS
 use AWS::S3
 use AWS::Dynamo
 use AWS::SQS
+use AWS::Logs
 
 # ── permission-free: cdylib reachable ───────────────────────────────
 val $version = AWS::version()
@@ -81,6 +82,38 @@ if ($have_creds) {
             AWS::SQS::delete($queue, $found_rh)
             assert_ok 1, "sqs delete completed without dying"
         }
+    }
+
+    # ── S3 + DynamoDB create/delete lifecycle ──────────────────
+    # These create and tear down real resources, so they are opt-in via
+    # $STRYKE_AWS_TEST_MUTATE to avoid surprising a shared test account.
+    if (defined $ENV{STRYKE_AWS_TEST_MUTATE}) {
+        val $b = "stryke-aws-test-" . lc($id->{account}) . "-$$-" . time()
+        val $mb = AWS::s3_create_bucket($b)
+        assert_eq $mb->{bucket}, $b, "s3_create_bucket returns the bucket name"
+        assert_ok $mb->{created}, "s3_create_bucket reports created"
+        val @buckets = AWS::s3_list_buckets()
+        assert_ok scalar(grep { $_ eq $b } @buckets), "created bucket appears in list_buckets"
+        assert_eq AWS::s3_delete_bucket($b), 1, "s3_delete_bucket succeeds on the empty bucket"
+
+        val $t = "stryke-aws-test-$$-" . time()
+        val $ct = AWS::ddb_create_table($t, "id", range_key => "ts", range_key_type => "N")
+        assert_eq $ct->{table}, $t, "ddb_create_table returns the table name"
+        assert_ok $ct->{created}, "ddb_create_table reports created"
+        val $dt = AWS::ddb_delete_table($t)
+        assert_ok $dt->{deleted}, "ddb_delete_table reports deleted"
+    }
+
+    # ── CloudWatch Logs PutLogEvents (needs an existing group + stream) ──
+    val $lg = $ENV{STRYKE_AWS_TEST_LOG_GROUP}
+    val $ls = $ENV{STRYKE_AWS_TEST_LOG_STREAM}
+    if (defined $lg && defined $ls) {
+        val $now = int(time() * 1000)
+        val $token = AWS::logs_put_log_events($lg, $ls,
+            [ { message => "stryke-aws-test-$$", timestamp => $now } ])
+        # PutLogEvents always returns a next_sequence_token on success; assert
+        # the call did not die and surfaced a token.
+        assert_ok defined $token, "logs_put_log_events returns a next_sequence_token"
     }
 }
 
