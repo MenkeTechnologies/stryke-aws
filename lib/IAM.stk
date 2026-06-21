@@ -1,0 +1,27 @@
+## lib/IAM.stk — `use AWS::IAM` (Identity and Access Management)
+##
+## Wraps `AWS::iam_*` from the cdylib.
+
+package AWS::IAM
+
+use AWS
+
+## ListUsers — a list of user hashrefs.
+fn AWS::IAM::users (%opts) {
+    AWS::iam_list_users(%opts)
+}
+
+## ListRoles — a list of role hashrefs.
+fn AWS::IAM::roles (%opts) {
+    AWS::iam_list_roles(%opts)
+}
+
+## GetUser — the caller's IAM user (or opts.user_name).
+fn AWS::IAM::user (%opts) {
+    AWS::iam_get_user(%opts)
+}
+
+## ListAttachedRolePolicies $role_name — { policy_name, policy_arn } hashrefs.
+fn AWS::IAM::role_policies ($role_name, %opts) {
+    AWS::iam_list_attached_role_policies($role_name, %opts)
+}

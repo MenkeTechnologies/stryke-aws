@@ -1,0 +1,34 @@
+## lib/KMS.stk — `use AWS::KMS` (Key Management Service)
+##
+## Wraps `AWS::kms_*` from the cdylib. Ciphertext and data-key blobs are
+## base64-encoded strings on the wire.
+
+package AWS::KMS
+
+use AWS
+
+## ListKeys — a list of { key_id, key_arn } hashrefs.
+fn AWS::KMS::keys (%opts) {
+    AWS::kms_list_keys(%opts)
+}
+
+## DescribeKey $key_id — key metadata hashref.
+fn AWS::KMS::describe ($key_id, %opts) {
+    AWS::kms_describe_key($key_id, %opts)
+}
+
+## Encrypt $plaintext under $key_id. Returns the base64 ciphertext.
+fn AWS::KMS::encrypt ($key_id, $plaintext, %opts) {
+    AWS::kms_encrypt($key_id, $plaintext, %opts)
+}
+
+## Decrypt a base64 $ciphertext. opts: key_id. Returns the plaintext.
+fn AWS::KMS::decrypt ($ciphertext, %opts) {
+    AWS::kms_decrypt($ciphertext, %opts)
+}
+
+## GenerateDataKey under $key_id. opts: key_spec (default AES_256). Returns
+## { key_id, plaintext, ciphertext } (both blobs base64).
+fn AWS::KMS::data_key ($key_id, %opts) {
+    AWS::kms_generate_data_key($key_id, %opts)
+}

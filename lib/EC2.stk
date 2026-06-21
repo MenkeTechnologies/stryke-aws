@@ -1,0 +1,33 @@
+## lib/EC2.stk — `use AWS::EC2`
+##
+## Wraps `AWS::ec2_*` from the cdylib.
+
+package AWS::EC2
+
+use AWS
+
+## DescribeInstances. opts: instance_ids (arrayref). Returns a list of instance
+## hashrefs.
+fn AWS::EC2::instances (%opts) {
+    AWS::ec2_describe_instances(%opts)
+}
+
+## StartInstances $ids (arrayref or single id). Returns state-change hashrefs.
+fn AWS::EC2::start ($ids, %opts) {
+    AWS::ec2_start_instances($ids, %opts)
+}
+
+## StopInstances $ids (arrayref or single id). opts: force.
+fn AWS::EC2::stop ($ids, %opts) {
+    AWS::ec2_stop_instances($ids, %opts)
+}
+
+## DescribeSecurityGroups. opts: group_ids (arrayref).
+fn AWS::EC2::security_groups (%opts) {
+    AWS::ec2_describe_security_groups(%opts)
+}
+
+## DescribeVpcs. opts: vpc_ids (arrayref).
+fn AWS::EC2::vpcs (%opts) {
+    AWS::ec2_describe_vpcs(%opts)
+}

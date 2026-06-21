@@ -47,6 +47,16 @@ fn AWS::SQS::list (%opts) {
     AWS::sqs_list_queues(%opts)
 }
 
+## SetQueueAttributes from an $attributes { name => value } hashref. Returns 1.
+fn AWS::SQS::set_attrs ($queue, $attributes, %opts) {
+    AWS::sqs_set_queue_attributes($queue, $attributes, %opts)
+}
+
+## ChangeMessageVisibility for a received message. Returns 1 on success.
+fn AWS::SQS::change_visibility ($queue, $receipt, $visibility_timeout, %opts) {
+    AWS::sqs_change_message_visibility($queue, $receipt, $visibility_timeout, %opts)
+}
+
 ## Convenience: long-poll a queue and pump every message through a
 ## callback, deleting on success. Returns the count handled.
 fn AWS::SQS::pump ($queue, %opts) {

@@ -26,3 +26,13 @@ fn AWS::SNS::publish ($message, %opts) {
 fn AWS::SNS::subscribe ($topic_arn, $protocol, $endpoint, %opts) {
     AWS::sns_subscribe($topic_arn, $protocol, $endpoint, %opts)
 }
+
+## Unsubscribe $subscription_arn. Returns 1 on success.
+fn AWS::SNS::unsubscribe ($subscription_arn, %opts) {
+    AWS::sns_unsubscribe($subscription_arn, %opts)
+}
+
+## ListSubscriptionsByTopic $topic_arn — subscription hashrefs.
+fn AWS::SNS::subscriptions ($topic_arn, %opts) {
+    AWS::sns_list_subscriptions_by_topic($topic_arn, %opts)
+}

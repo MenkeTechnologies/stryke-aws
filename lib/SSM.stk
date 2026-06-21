@@ -26,3 +26,9 @@ fn AWS::SSM::by_path ($path, %opts) {
 fn AWS::SSM::delete ($name, %opts) {
     AWS::ssm_delete_parameter($name, %opts)
 }
+
+## GetParameters — fetch up to 10 parameters by $names (arrayref or single name).
+## opts: with_decryption. Returns { parameters, invalid_parameters }.
+fn AWS::SSM::get_many ($names, %opts) {
+    AWS::ssm_get_parameters($names, %opts)
+}

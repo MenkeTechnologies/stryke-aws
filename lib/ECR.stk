@@ -1,0 +1,18 @@
+## lib/ECR.stk — `use AWS::ECR` (Elastic Container Registry)
+##
+## Wraps `AWS::ecr_*` from the cdylib.
+
+package AWS::ECR
+
+use AWS
+
+## DescribeRepositories. opts: repository_names (arrayref). Returns a list of
+## repository hashrefs.
+fn AWS::ECR::repositories (%opts) {
+    AWS::ecr_describe_repositories(%opts)
+}
+
+## ListImages in $repository_name — { image_digest, image_tag } hashrefs.
+fn AWS::ECR::images ($repository_name, %opts) {
+    AWS::ecr_list_images($repository_name, %opts)
+}

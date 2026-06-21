@@ -1,0 +1,28 @@
+## lib/Logs.stk — `use AWS::Logs` (CloudWatch Logs)
+##
+## Wraps `AWS::logs_*` from the cdylib.
+
+package AWS::Logs
+
+use AWS
+
+## DescribeLogGroups. opts: prefix. Returns a list of log-group hashrefs.
+fn AWS::Logs::groups (%opts) {
+    AWS::logs_describe_log_groups(%opts)
+}
+
+## CreateLogGroup named $name. Returns 1 on success.
+fn AWS::Logs::create ($name, %opts) {
+    AWS::logs_create_log_group($name, %opts)
+}
+
+## FilterLogEvents across $log_group. opts: filter_pattern, start_time,
+## end_time (epoch ms), limit. Returns a list of event hashrefs.
+fn AWS::Logs::filter ($log_group, %opts) {
+    AWS::logs_filter_log_events($log_group, %opts)
+}
+
+## GetLogEvents from $log_stream in $log_group. opts: limit, start_from_head.
+fn AWS::Logs::events ($log_group, $log_stream, %opts) {
+    AWS::logs_get_log_events($log_group, $log_stream, %opts)
+}

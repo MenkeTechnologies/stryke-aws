@@ -1,7 +1,7 @@
 [package]
 name = "stryke-aws"
 version = "0.19.0"
-description = "AWS client (S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter Store, Secrets Manager) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region."
+description = "AWS client (S3, DynamoDB, SQS, Lambda, STS, SNS, SSM, Secrets Manager, SES, CloudWatch, CloudWatch Logs, EC2, KMS, IAM, Kinesis, ECR, Step Functions) for stryke. cdylib loaded in-process — persistent tokio runtime + SdkConfig cache per region."
 authors = ["MenkeTechnologies"]
 license = "MIT"
 repository = "https://github.com/MenkeTechnologies/stryke-aws"
@@ -75,6 +75,43 @@ exports = [
     "aws__s3_object_url",
     "aws__parse_s3_url",
     "aws__region_for_az",
+    "aws__s3_list_object_versions",
+    "aws__s3_get_bucket_location",
+    "aws__s3_get_bucket_tagging",
+    "aws__ddb_transact_write_items",
+    "aws__ddb_describe_time_to_live",
+    "aws__sqs_set_queue_attributes",
+    "aws__sqs_change_message_visibility",
+    "aws__lambda_get_function",
+    "aws__sns_unsubscribe",
+    "aws__sns_list_subscriptions_by_topic",
+    "aws__ssm_get_parameters",
+    "aws__ec2_describe_instances",
+    "aws__ec2_start_instances",
+    "aws__ec2_stop_instances",
+    "aws__ec2_describe_security_groups",
+    "aws__ec2_describe_vpcs",
+    "aws__logs_describe_log_groups",
+    "aws__logs_create_log_group",
+    "aws__logs_filter_log_events",
+    "aws__logs_get_log_events",
+    "aws__kms_list_keys",
+    "aws__kms_describe_key",
+    "aws__kms_encrypt",
+    "aws__kms_decrypt",
+    "aws__kms_generate_data_key",
+    "aws__iam_list_users",
+    "aws__iam_list_roles",
+    "aws__iam_get_user",
+    "aws__iam_list_attached_role_policies",
+    "aws__kinesis_list_streams",
+    "aws__kinesis_describe_stream",
+    "aws__kinesis_put_record",
+    "aws__ecr_describe_repositories",
+    "aws__ecr_list_images",
+    "aws__sfn_list_state_machines",
+    "aws__sfn_start_execution",
+    "aws__sfn_describe_execution",
 ]
 
 [scripts]

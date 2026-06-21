@@ -1179,6 +1179,935 @@ async fn op_cloudwatch_list_metrics(opts: Value) -> Result<Value> {
     Ok(json!({"metrics": metrics}))
 }
 
+// ── S3 (versions, location, tagging) ────────────────────────────────────────
+
+async fn op_s3_list_object_versions(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?
+        .to_string();
+    let prefix = opts["prefix"].as_str().unwrap_or("");
+    let r = client
+        .list_object_versions()
+        .bucket(&bucket)
+        .prefix(prefix)
+        .send()
+        .await?;
+    let versions: Vec<Value> = r
+        .versions()
+        .iter()
+        .map(|v| {
+            json!({
+                "key": v.key().unwrap_or(""),
+                "version_id": v.version_id().unwrap_or(""),
+                "is_latest": v.is_latest(),
+                "size": v.size(),
+            })
+        })
+        .collect();
+    let delete_markers: Vec<Value> = r
+        .delete_markers()
+        .iter()
+        .map(|d| {
+            json!({
+                "key": d.key().unwrap_or(""),
+                "version_id": d.version_id().unwrap_or(""),
+                "is_latest": d.is_latest(),
+            })
+        })
+        .collect();
+    Ok(json!({"bucket": bucket, "versions": versions, "delete_markers": delete_markers}))
+}
+
+async fn op_s3_get_bucket_location(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?
+        .to_string();
+    let r = client.get_bucket_location().bucket(&bucket).send().await?;
+    // An empty LocationConstraint means us-east-1 (the API's historical quirk).
+    let constraint = r.location_constraint().map(|c| c.as_str().to_string());
+    let region = match constraint.as_deref() {
+        None | Some("") => "us-east-1".to_string(),
+        Some(s) => s.to_string(),
+    };
+    Ok(json!({"bucket": bucket, "location_constraint": constraint, "region": region}))
+}
+
+async fn op_s3_get_bucket_tagging(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_s3::Client::new(&cfg);
+    let bucket = opts["bucket"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing bucket"))?
+        .to_string();
+    let r = client.get_bucket_tagging().bucket(&bucket).send().await?;
+    let tags: serde_json::Map<String, Value> = r
+        .tag_set()
+        .iter()
+        .map(|t| (t.key().to_string(), Value::String(t.value().to_string())))
+        .collect();
+    Ok(json!({"bucket": bucket, "tags": tags}))
+}
+
+// ── DynamoDB (transactions, TTL) ─────────────────────────────────────────────
+
+async fn op_ddb_transact_write_items(opts: Value) -> Result<Value> {
+    use aws_sdk_dynamodb::types::{Delete, Put, TransactWriteItem};
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let mut items: Vec<TransactWriteItem> = Vec::new();
+    if let Some(puts) = opts["puts"].as_array() {
+        for entry in puts {
+            let table = entry["table"]
+                .as_str()
+                .ok_or_else(|| anyhow!("each put needs table"))?;
+            let item = entry["item"]
+                .as_object()
+                .ok_or_else(|| anyhow!("each put needs item object"))?;
+            let mut p = Put::builder().table_name(table);
+            for (k, v) in item {
+                p = p.item(k, json_to_av(v));
+            }
+            items.push(TransactWriteItem::builder().put(p.build()?).build());
+        }
+    }
+    if let Some(dels) = opts["deletes"].as_array() {
+        for entry in dels {
+            let table = entry["table"]
+                .as_str()
+                .ok_or_else(|| anyhow!("each delete needs table"))?;
+            let key = entry["key"]
+                .as_object()
+                .ok_or_else(|| anyhow!("each delete needs key object"))?;
+            let mut d = Delete::builder().table_name(table);
+            for (k, v) in key {
+                d = d.key(k, json_to_av(v));
+            }
+            items.push(TransactWriteItem::builder().delete(d.build()?).build());
+        }
+    }
+    if items.is_empty() {
+        return Err(anyhow!("provide puts and/or deletes"));
+    }
+    let n = items.len();
+    client
+        .transact_write_items()
+        .set_transact_items(Some(items))
+        .send()
+        .await?;
+    Ok(json!({"written": n}))
+}
+
+async fn op_ddb_describe_time_to_live(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_dynamodb::Client::new(&cfg);
+    let table = opts["table"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing table"))?
+        .to_string();
+    let r = client
+        .describe_time_to_live()
+        .table_name(&table)
+        .send()
+        .await?;
+    let ttl = r.time_to_live_description();
+    Ok(json!({
+        "table": table,
+        "status": ttl.and_then(|t| t.time_to_live_status()).map(|s| s.as_str()),
+        "attribute_name": ttl.and_then(|t| t.attribute_name()),
+    }))
+}
+
+// ── SQS (attributes, visibility) ─────────────────────────────────────────────
+
+async fn op_sqs_set_queue_attributes(opts: Value) -> Result<Value> {
+    use aws_sdk_sqs::types::QueueAttributeName;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sqs::Client::new(&cfg);
+    let queue_url = opts["queue_url"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing queue_url"))?
+        .to_string();
+    let attrs = opts["attributes"]
+        .as_object()
+        .ok_or_else(|| anyhow!("missing attributes (object)"))?;
+    let mut req = client.set_queue_attributes().queue_url(&queue_url);
+    for (k, v) in attrs {
+        let val = v
+            .as_str()
+            .map(String::from)
+            .unwrap_or_else(|| v.to_string());
+        req = req.attributes(QueueAttributeName::from(k.as_str()), val);
+    }
+    req.send().await?;
+    Ok(json!({"queue_url": queue_url, "ok": true}))
+}
+
+async fn op_sqs_change_message_visibility(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sqs::Client::new(&cfg);
+    let queue_url = opts["queue_url"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing queue_url"))?
+        .to_string();
+    let receipt_handle = opts["receipt_handle"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing receipt_handle"))?;
+    let timeout = opts["visibility_timeout"]
+        .as_i64()
+        .ok_or_else(|| anyhow!("missing visibility_timeout"))? as i32;
+    client
+        .change_message_visibility()
+        .queue_url(&queue_url)
+        .receipt_handle(receipt_handle)
+        .visibility_timeout(timeout)
+        .send()
+        .await?;
+    Ok(json!({"queue_url": queue_url, "ok": true}))
+}
+
+// ── Lambda (get function) ────────────────────────────────────────────────────
+
+async fn op_lambda_get_function(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_lambda::Client::new(&cfg);
+    let function = opts["function"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing function"))?
+        .to_string();
+    let r = client
+        .get_function()
+        .function_name(&function)
+        .send()
+        .await?;
+    let c = r.configuration();
+    Ok(json!({
+        "function": function,
+        "runtime": c.and_then(|c| c.runtime()).map(|x| x.as_str()),
+        "handler": c.and_then(|c| c.handler()),
+        "arn": c.and_then(|c| c.function_arn()),
+        "memory_size": c.and_then(|c| c.memory_size()),
+        "timeout": c.and_then(|c| c.timeout()),
+        "last_modified": c.and_then(|c| c.last_modified()),
+        "state": c.and_then(|c| c.state()).map(|x| x.as_str()),
+    }))
+}
+
+// ── SNS (unsubscribe, subscriptions) ─────────────────────────────────────────
+
+async fn op_sns_unsubscribe(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let subscription_arn = opts["subscription_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing subscription_arn"))?
+        .to_string();
+    client
+        .unsubscribe()
+        .subscription_arn(&subscription_arn)
+        .send()
+        .await?;
+    Ok(json!({"subscription_arn": subscription_arn, "unsubscribed": true}))
+}
+
+async fn op_sns_list_subscriptions_by_topic(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sns::Client::new(&cfg);
+    let topic_arn = opts["topic_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing topic_arn"))?
+        .to_string();
+    let r = client
+        .list_subscriptions_by_topic()
+        .topic_arn(&topic_arn)
+        .send()
+        .await?;
+    let subs: Vec<Value> = r
+        .subscriptions()
+        .iter()
+        .map(|s| {
+            json!({
+                "subscription_arn": s.subscription_arn().unwrap_or(""),
+                "protocol": s.protocol().unwrap_or(""),
+                "endpoint": s.endpoint().unwrap_or(""),
+                "owner": s.owner().unwrap_or(""),
+            })
+        })
+        .collect();
+    Ok(json!({"topic_arn": topic_arn, "subscriptions": subs}))
+}
+
+// ── SSM (get_parameters) ─────────────────────────────────────────────────────
+
+async fn op_ssm_get_parameters(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ssm::Client::new(&cfg);
+    let names = string_vec(&opts["names"])?;
+    if names.is_empty() {
+        return Err(anyhow!("names must be a non-empty array"));
+    }
+    let decrypt = opts["with_decryption"].as_bool().unwrap_or(false);
+    let r = client
+        .get_parameters()
+        .set_names(Some(names))
+        .with_decryption(decrypt)
+        .send()
+        .await?;
+    let params: Vec<Value> = r
+        .parameters()
+        .iter()
+        .map(|p| {
+            json!({
+                "name": p.name().unwrap_or(""),
+                "value": p.value(),
+                "version": p.version(),
+            })
+        })
+        .collect();
+    Ok(json!({
+        "parameters": params,
+        "invalid_parameters": r.invalid_parameters(),
+    }))
+}
+
+// ── EC2 ──────────────────────────────────────────────────────────────────────
+
+async fn op_ec2_describe_instances(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ec2::Client::new(&cfg);
+    let mut req = client.describe_instances();
+    if let Ok(ids) = string_vec(&opts["instance_ids"]) {
+        if !ids.is_empty() {
+            req = req.set_instance_ids(Some(ids));
+        }
+    }
+    let r = req.send().await?;
+    let mut instances: Vec<Value> = Vec::new();
+    for res in r.reservations() {
+        for i in res.instances() {
+            instances.push(json!({
+                "instance_id": i.instance_id().unwrap_or(""),
+                "instance_type": i.instance_type().map(|t| t.as_str()),
+                "state": i.state().and_then(|s| s.name()).map(|n| n.as_str()),
+                "private_ip": i.private_ip_address(),
+                "public_ip": i.public_ip_address(),
+                "az": i.placement().and_then(|p| p.availability_zone()),
+                "image_id": i.image_id(),
+                "vpc_id": i.vpc_id(),
+                "subnet_id": i.subnet_id(),
+            }));
+        }
+    }
+    Ok(json!({"instances": instances}))
+}
+
+async fn op_ec2_start_instances(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ec2::Client::new(&cfg);
+    let ids = string_vec(&opts["instance_ids"])?;
+    if ids.is_empty() {
+        return Err(anyhow!("instance_ids must be a non-empty array"));
+    }
+    let r = client
+        .start_instances()
+        .set_instance_ids(Some(ids))
+        .send()
+        .await?;
+    let changes: Vec<Value> = r
+        .starting_instances()
+        .iter()
+        .map(|s| {
+            json!({
+                "instance_id": s.instance_id().unwrap_or(""),
+                "current_state": s.current_state().and_then(|st| st.name()).map(|n| n.as_str()),
+                "previous_state": s.previous_state().and_then(|st| st.name()).map(|n| n.as_str()),
+            })
+        })
+        .collect();
+    Ok(json!({"instances": changes}))
+}
+
+async fn op_ec2_stop_instances(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ec2::Client::new(&cfg);
+    let ids = string_vec(&opts["instance_ids"])?;
+    if ids.is_empty() {
+        return Err(anyhow!("instance_ids must be a non-empty array"));
+    }
+    let force = opts["force"].as_bool().unwrap_or(false);
+    let r = client
+        .stop_instances()
+        .set_instance_ids(Some(ids))
+        .force(force)
+        .send()
+        .await?;
+    let changes: Vec<Value> = r
+        .stopping_instances()
+        .iter()
+        .map(|s| {
+            json!({
+                "instance_id": s.instance_id().unwrap_or(""),
+                "current_state": s.current_state().and_then(|st| st.name()).map(|n| n.as_str()),
+                "previous_state": s.previous_state().and_then(|st| st.name()).map(|n| n.as_str()),
+            })
+        })
+        .collect();
+    Ok(json!({"instances": changes}))
+}
+
+async fn op_ec2_describe_security_groups(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ec2::Client::new(&cfg);
+    let mut req = client.describe_security_groups();
+    if let Ok(ids) = string_vec(&opts["group_ids"]) {
+        if !ids.is_empty() {
+            req = req.set_group_ids(Some(ids));
+        }
+    }
+    let r = req.send().await?;
+    let groups: Vec<Value> = r
+        .security_groups()
+        .iter()
+        .map(|g| {
+            json!({
+                "group_id": g.group_id().unwrap_or(""),
+                "group_name": g.group_name().unwrap_or(""),
+                "description": g.description().unwrap_or(""),
+                "vpc_id": g.vpc_id(),
+            })
+        })
+        .collect();
+    Ok(json!({"security_groups": groups}))
+}
+
+async fn op_ec2_describe_vpcs(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ec2::Client::new(&cfg);
+    let mut req = client.describe_vpcs();
+    if let Ok(ids) = string_vec(&opts["vpc_ids"]) {
+        if !ids.is_empty() {
+            req = req.set_vpc_ids(Some(ids));
+        }
+    }
+    let r = req.send().await?;
+    let vpcs: Vec<Value> = r
+        .vpcs()
+        .iter()
+        .map(|v| {
+            json!({
+                "vpc_id": v.vpc_id().unwrap_or(""),
+                "cidr_block": v.cidr_block(),
+                "state": v.state().map(|s| s.as_str()),
+                "is_default": v.is_default(),
+            })
+        })
+        .collect();
+    Ok(json!({"vpcs": vpcs}))
+}
+
+// ── CloudWatch Logs ───────────────────────────────────────────────────────────
+
+async fn op_logs_describe_log_groups(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatchlogs::Client::new(&cfg);
+    let mut req = client.describe_log_groups();
+    if let Some(prefix) = opts["prefix"].as_str() {
+        req = req.log_group_name_prefix(prefix);
+    }
+    let r = req.send().await?;
+    let groups: Vec<Value> = r
+        .log_groups()
+        .iter()
+        .map(|g| {
+            json!({
+                "name": g.log_group_name().unwrap_or(""),
+                "arn": g.arn(),
+                "stored_bytes": g.stored_bytes(),
+                "retention_days": g.retention_in_days(),
+            })
+        })
+        .collect();
+    Ok(json!({"log_groups": groups}))
+}
+
+async fn op_logs_create_log_group(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatchlogs::Client::new(&cfg);
+    let name = opts["name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing name"))?
+        .to_string();
+    client
+        .create_log_group()
+        .log_group_name(&name)
+        .send()
+        .await?;
+    Ok(json!({"name": name, "created": true}))
+}
+
+async fn op_logs_filter_log_events(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatchlogs::Client::new(&cfg);
+    let group = opts["log_group"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing log_group"))?
+        .to_string();
+    let mut req = client.filter_log_events().log_group_name(&group);
+    if let Some(p) = opts["filter_pattern"].as_str() {
+        req = req.filter_pattern(p);
+    }
+    if let Some(t) = opts["start_time"].as_i64() {
+        req = req.start_time(t);
+    }
+    if let Some(t) = opts["end_time"].as_i64() {
+        req = req.end_time(t);
+    }
+    if let Some(n) = opts["limit"].as_i64() {
+        req = req.limit(n as i32);
+    }
+    let r = req.send().await?;
+    let events: Vec<Value> = r
+        .events()
+        .iter()
+        .map(|e| {
+            json!({
+                "timestamp": e.timestamp(),
+                "message": e.message().unwrap_or(""),
+                "log_stream": e.log_stream_name().unwrap_or(""),
+            })
+        })
+        .collect();
+    Ok(json!({"log_group": group, "events": events}))
+}
+
+async fn op_logs_get_log_events(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_cloudwatchlogs::Client::new(&cfg);
+    let group = opts["log_group"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing log_group"))?
+        .to_string();
+    let stream = opts["log_stream"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing log_stream"))?
+        .to_string();
+    let mut req = client
+        .get_log_events()
+        .log_group_name(&group)
+        .log_stream_name(&stream);
+    if let Some(n) = opts["limit"].as_i64() {
+        req = req.limit(n as i32);
+    }
+    if let Some(b) = opts["start_from_head"].as_bool() {
+        req = req.start_from_head(b);
+    }
+    let r = req.send().await?;
+    let events: Vec<Value> = r
+        .events()
+        .iter()
+        .map(|e| {
+            json!({
+                "timestamp": e.timestamp(),
+                "message": e.message().unwrap_or(""),
+                "ingestion_time": e.ingestion_time(),
+            })
+        })
+        .collect();
+    Ok(json!({"log_group": group, "log_stream": stream, "events": events}))
+}
+
+// ── KMS ──────────────────────────────────────────────────────────────────────
+
+async fn op_kms_list_keys(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kms::Client::new(&cfg);
+    let r = client.list_keys().send().await?;
+    let keys: Vec<Value> = r
+        .keys()
+        .iter()
+        .map(|k| {
+            json!({
+                "key_id": k.key_id().unwrap_or(""),
+                "key_arn": k.key_arn().unwrap_or(""),
+            })
+        })
+        .collect();
+    Ok(json!({"keys": keys}))
+}
+
+async fn op_kms_describe_key(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kms::Client::new(&cfg);
+    let key_id = opts["key_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing key_id"))?
+        .to_string();
+    let r = client.describe_key().key_id(&key_id).send().await?;
+    let m = r.key_metadata();
+    Ok(json!({
+        "key_id": m.map(|m| m.key_id().to_string()),
+        "arn": m.and_then(|m| m.arn()),
+        "enabled": m.map(|m| m.enabled()),
+        "description": m.and_then(|m| m.description()),
+        "key_state": m.and_then(|m| m.key_state()).map(|s| s.as_str()),
+        "key_usage": m.and_then(|m| m.key_usage()).map(|u| u.as_str()),
+    }))
+}
+
+async fn op_kms_encrypt(opts: Value) -> Result<Value> {
+    use aws_sdk_kms::primitives::Blob;
+    use base64::Engine as _;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kms::Client::new(&cfg);
+    let key_id = opts["key_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing key_id"))?;
+    let plaintext = opts["plaintext"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing plaintext"))?;
+    let r = client
+        .encrypt()
+        .key_id(key_id)
+        .plaintext(Blob::new(plaintext.as_bytes().to_vec()))
+        .send()
+        .await?;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let ciphertext = r
+        .ciphertext_blob()
+        .map(|b| b64.encode(b.as_ref()))
+        .unwrap_or_default();
+    Ok(json!({
+        "key_id": r.key_id().unwrap_or(""),
+        "ciphertext": ciphertext,
+    }))
+}
+
+async fn op_kms_decrypt(opts: Value) -> Result<Value> {
+    use aws_sdk_kms::primitives::Blob;
+    use base64::Engine as _;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kms::Client::new(&cfg);
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let ciphertext = opts["ciphertext"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing ciphertext (base64)"))?;
+    let blob = b64
+        .decode(ciphertext)
+        .map_err(|e| anyhow!("ciphertext not valid base64: {e}"))?;
+    let mut req = client.decrypt().ciphertext_blob(Blob::new(blob));
+    if let Some(k) = opts["key_id"].as_str() {
+        req = req.key_id(k);
+    }
+    let r = req.send().await?;
+    let plaintext = r
+        .plaintext()
+        .map(|b| match std::str::from_utf8(b.as_ref()) {
+            Ok(s) => s.to_string(),
+            Err(_) => format!("base64:{}", b64.encode(b.as_ref())),
+        })
+        .unwrap_or_default();
+    Ok(json!({
+        "key_id": r.key_id().unwrap_or(""),
+        "plaintext": plaintext,
+    }))
+}
+
+async fn op_kms_generate_data_key(opts: Value) -> Result<Value> {
+    use aws_sdk_kms::types::DataKeySpec;
+    use base64::Engine as _;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kms::Client::new(&cfg);
+    let key_id = opts["key_id"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing key_id"))?;
+    let spec = opts["key_spec"].as_str().unwrap_or("AES_256");
+    let r = client
+        .generate_data_key()
+        .key_id(key_id)
+        .key_spec(DataKeySpec::from(spec))
+        .send()
+        .await?;
+    let b64 = base64::engine::general_purpose::STANDARD;
+    let plaintext = r
+        .plaintext()
+        .map(|b| b64.encode(b.as_ref()))
+        .unwrap_or_default();
+    let ciphertext = r
+        .ciphertext_blob()
+        .map(|b| b64.encode(b.as_ref()))
+        .unwrap_or_default();
+    Ok(json!({
+        "key_id": r.key_id().unwrap_or(""),
+        "plaintext": plaintext,
+        "ciphertext": ciphertext,
+    }))
+}
+
+// ── IAM ──────────────────────────────────────────────────────────────────────
+
+async fn op_iam_list_users(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_iam::Client::new(&cfg);
+    let r = client.list_users().send().await?;
+    let users: Vec<Value> = r
+        .users()
+        .iter()
+        .map(|u| {
+            json!({
+                "user_name": u.user_name(),
+                "user_id": u.user_id(),
+                "arn": u.arn(),
+                "path": u.path(),
+                "create_date": u.create_date().to_string(),
+            })
+        })
+        .collect();
+    Ok(json!({"users": users}))
+}
+
+async fn op_iam_list_roles(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_iam::Client::new(&cfg);
+    let r = client.list_roles().send().await?;
+    let roles: Vec<Value> = r
+        .roles()
+        .iter()
+        .map(|role| {
+            json!({
+                "role_name": role.role_name(),
+                "role_id": role.role_id(),
+                "arn": role.arn(),
+                "path": role.path(),
+                "create_date": role.create_date().to_string(),
+            })
+        })
+        .collect();
+    Ok(json!({"roles": roles}))
+}
+
+async fn op_iam_get_user(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_iam::Client::new(&cfg);
+    let mut req = client.get_user();
+    if let Some(name) = opts["user_name"].as_str() {
+        req = req.user_name(name);
+    }
+    let r = req.send().await?;
+    let u = r.user();
+    Ok(json!({
+        "user_name": u.map(|u| u.user_name().to_string()),
+        "user_id": u.map(|u| u.user_id().to_string()),
+        "arn": u.map(|u| u.arn().to_string()),
+        "path": u.map(|u| u.path().to_string()),
+    }))
+}
+
+async fn op_iam_list_attached_role_policies(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_iam::Client::new(&cfg);
+    let role_name = opts["role_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing role_name"))?
+        .to_string();
+    let r = client
+        .list_attached_role_policies()
+        .role_name(&role_name)
+        .send()
+        .await?;
+    let policies: Vec<Value> = r
+        .attached_policies()
+        .iter()
+        .map(|p| {
+            json!({
+                "policy_name": p.policy_name(),
+                "policy_arn": p.policy_arn(),
+            })
+        })
+        .collect();
+    Ok(json!({"role_name": role_name, "policies": policies}))
+}
+
+// ── Kinesis ──────────────────────────────────────────────────────────────────
+
+async fn op_kinesis_list_streams(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kinesis::Client::new(&cfg);
+    let r = client.list_streams().send().await?;
+    Ok(json!({"streams": r.stream_names()}))
+}
+
+async fn op_kinesis_describe_stream(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kinesis::Client::new(&cfg);
+    let name = opts["stream_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing stream_name"))?
+        .to_string();
+    let r = client.describe_stream().stream_name(&name).send().await?;
+    let d = r.stream_description();
+    Ok(json!({
+        "stream_name": d.map(|d| d.stream_name().to_string()),
+        "stream_arn": d.map(|d| d.stream_arn().to_string()),
+        "status": d.map(|d| d.stream_status().as_str()),
+        "shard_count": d.map(|d| d.shards().len()),
+        "retention_hours": d.map(|d| d.retention_period_hours()),
+    }))
+}
+
+async fn op_kinesis_put_record(opts: Value) -> Result<Value> {
+    use aws_sdk_kinesis::primitives::Blob;
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_kinesis::Client::new(&cfg);
+    let name = opts["stream_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing stream_name"))?
+        .to_string();
+    let partition_key = opts["partition_key"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing partition_key"))?;
+    let data = opts["data"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing data"))?;
+    let r = client
+        .put_record()
+        .stream_name(&name)
+        .partition_key(partition_key)
+        .data(Blob::new(data.as_bytes().to_vec()))
+        .send()
+        .await?;
+    Ok(json!({
+        "stream_name": name,
+        "shard_id": r.shard_id(),
+        "sequence_number": r.sequence_number(),
+    }))
+}
+
+// ── ECR ──────────────────────────────────────────────────────────────────────
+
+async fn op_ecr_describe_repositories(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ecr::Client::new(&cfg);
+    let mut req = client.describe_repositories();
+    if let Ok(names) = string_vec(&opts["repository_names"]) {
+        if !names.is_empty() {
+            req = req.set_repository_names(Some(names));
+        }
+    }
+    let r = req.send().await?;
+    let repos: Vec<Value> = r
+        .repositories()
+        .iter()
+        .map(|repo| {
+            json!({
+                "repository_name": repo.repository_name(),
+                "repository_arn": repo.repository_arn(),
+                "repository_uri": repo.repository_uri(),
+                "registry_id": repo.registry_id(),
+            })
+        })
+        .collect();
+    Ok(json!({"repositories": repos}))
+}
+
+async fn op_ecr_list_images(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_ecr::Client::new(&cfg);
+    let repository = opts["repository_name"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing repository_name"))?
+        .to_string();
+    let r = client
+        .list_images()
+        .repository_name(&repository)
+        .send()
+        .await?;
+    let images: Vec<Value> = r
+        .image_ids()
+        .iter()
+        .map(|i| {
+            json!({
+                "image_digest": i.image_digest(),
+                "image_tag": i.image_tag(),
+            })
+        })
+        .collect();
+    Ok(json!({"repository_name": repository, "images": images}))
+}
+
+// ── Step Functions ────────────────────────────────────────────────────────────
+
+async fn op_sfn_list_state_machines(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sfn::Client::new(&cfg);
+    let r = client.list_state_machines().send().await?;
+    let machines: Vec<Value> = r
+        .state_machines()
+        .iter()
+        .map(|m| {
+            json!({
+                "name": m.name(),
+                "arn": m.state_machine_arn(),
+                "type": m.r#type().as_str(),
+                "creation_date": m.creation_date().to_string(),
+            })
+        })
+        .collect();
+    Ok(json!({"state_machines": machines}))
+}
+
+async fn op_sfn_start_execution(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sfn::Client::new(&cfg);
+    let arn = opts["state_machine_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing state_machine_arn"))?;
+    let mut req = client.start_execution().state_machine_arn(arn);
+    if let Some(name) = opts["name"].as_str() {
+        req = req.name(name);
+    }
+    if !opts["input"].is_null() {
+        // `input` may be a JSON object/value or a string; send as a JSON string.
+        let input = match &opts["input"] {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        req = req.input(input);
+    }
+    let r = req.send().await?;
+    Ok(json!({
+        "execution_arn": r.execution_arn(),
+        "start_date": r.start_date().to_string(),
+    }))
+}
+
+async fn op_sfn_describe_execution(opts: Value) -> Result<Value> {
+    let cfg = get_config(&opts).await;
+    let client = aws_sdk_sfn::Client::new(&cfg);
+    let arn = opts["execution_arn"]
+        .as_str()
+        .ok_or_else(|| anyhow!("missing execution_arn"))?
+        .to_string();
+    let r = client
+        .describe_execution()
+        .execution_arn(&arn)
+        .send()
+        .await?;
+    Ok(json!({
+        "execution_arn": r.execution_arn(),
+        "state_machine_arn": r.state_machine_arn(),
+        "name": r.name(),
+        "status": r.status().as_str(),
+        "start_date": r.start_date().to_string(),
+        "stop_date": r.stop_date().map(|d| d.to_string()),
+        "output": r.output(),
+    }))
+}
+
 // ── FFI plumbing ────────────────────────────────────────────────────────────
 
 fn ffi_call_async<F, Fut>(args: *const c_char, handler: F) -> *const c_char
@@ -2292,6 +3221,207 @@ pub extern "C" fn aws__parse_s3_url(args: *const c_char) -> *const c_char {
 #[no_mangle]
 pub extern "C" fn aws__region_for_az(args: *const c_char) -> *const c_char {
     ffi_call_async(args, |opts| async move { op_region_for_az(opts) })
+}
+
+// ── exports: S3 / DynamoDB / SQS / Lambda / SNS / SSM extras ──────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__s3_list_object_versions(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_list_object_versions)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_get_bucket_location(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_get_bucket_location)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__s3_get_bucket_tagging(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_s3_get_bucket_tagging)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_transact_write_items(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_transact_write_items)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ddb_describe_time_to_live(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ddb_describe_time_to_live)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sqs_set_queue_attributes(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sqs_set_queue_attributes)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sqs_change_message_visibility(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sqs_change_message_visibility)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__lambda_get_function(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_lambda_get_function)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_unsubscribe(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_unsubscribe)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sns_list_subscriptions_by_topic(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sns_list_subscriptions_by_topic)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ssm_get_parameters(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ssm_get_parameters)
+}
+
+// ── exports: EC2 ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__ec2_describe_instances(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ec2_describe_instances)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ec2_start_instances(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ec2_start_instances)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ec2_stop_instances(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ec2_stop_instances)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ec2_describe_security_groups(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ec2_describe_security_groups)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ec2_describe_vpcs(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ec2_describe_vpcs)
+}
+
+// ── exports: CloudWatch Logs ──────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__logs_describe_log_groups(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_logs_describe_log_groups)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__logs_create_log_group(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_logs_create_log_group)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__logs_filter_log_events(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_logs_filter_log_events)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__logs_get_log_events(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_logs_get_log_events)
+}
+
+// ── exports: KMS ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__kms_list_keys(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kms_list_keys)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__kms_describe_key(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kms_describe_key)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__kms_encrypt(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kms_encrypt)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__kms_decrypt(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kms_decrypt)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__kms_generate_data_key(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kms_generate_data_key)
+}
+
+// ── exports: IAM ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__iam_list_users(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_iam_list_users)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__iam_list_roles(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_iam_list_roles)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__iam_get_user(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_iam_get_user)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__iam_list_attached_role_policies(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_iam_list_attached_role_policies)
+}
+
+// ── exports: Kinesis ──────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__kinesis_list_streams(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kinesis_list_streams)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__kinesis_describe_stream(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kinesis_describe_stream)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__kinesis_put_record(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_kinesis_put_record)
+}
+
+// ── exports: ECR ──────────────────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__ecr_describe_repositories(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ecr_describe_repositories)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__ecr_list_images(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_ecr_list_images)
+}
+
+// ── exports: Step Functions ───────────────────────────────────────────────────
+
+#[no_mangle]
+pub extern "C" fn aws__sfn_list_state_machines(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sfn_list_state_machines)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sfn_start_execution(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sfn_start_execution)
+}
+
+#[no_mangle]
+pub extern "C" fn aws__sfn_describe_execution(args: *const c_char) -> *const c_char {
+    ffi_call_async(args, op_sfn_describe_execution)
 }
 
 #[cfg(test)]

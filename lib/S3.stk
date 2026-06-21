@@ -74,3 +74,23 @@ fn AWS::S3::buckets (%opts) {
     AWS::s3_list_buckets(%opts)
 }
 
+## List object versions under an s3:// URI prefix. Returns
+## { versions, delete_markers }.
+fn AWS::S3::versions ($uri, %opts) {
+    val ($bucket, $prefix) = AWS::S3::_parse($uri)
+    AWS::s3_list_object_versions($bucket, prefix => $prefix, %opts)
+}
+
+## GetBucketLocation for an s3:// URI (or bare "s3://bucket"). Returns
+## { bucket, location_constraint, region }.
+fn AWS::S3::location ($uri, %opts) {
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    AWS::s3_get_bucket_location($bucket, %opts)
+}
+
+## GetBucketTagging for an s3:// URI. Returns the { key => value } tag hashref.
+fn AWS::S3::tags ($uri, %opts) {
+    val ($bucket, $key) = AWS::S3::_parse($uri)
+    AWS::s3_get_bucket_tagging($bucket, %opts)
+}
+

@@ -1,0 +1,22 @@
+## lib/Kinesis.stk — `use AWS::Kinesis`
+##
+## Wraps `AWS::kinesis_*` from the cdylib.
+
+package AWS::Kinesis
+
+use AWS
+
+## ListStreams — a list of stream-name strings.
+fn AWS::Kinesis::list (%opts) {
+    AWS::kinesis_list_streams(%opts)
+}
+
+## DescribeStream $stream_name — stream metadata hashref.
+fn AWS::Kinesis::describe ($stream_name, %opts) {
+    AWS::kinesis_describe_stream($stream_name, %opts)
+}
+
+## PutRecord $data into $stream_name with $partition_key.
+fn AWS::Kinesis::put ($stream_name, $partition_key, $data, %opts) {
+    AWS::kinesis_put_record($stream_name, $partition_key, $data, %opts)
+}

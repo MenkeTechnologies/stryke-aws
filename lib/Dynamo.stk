@@ -54,3 +54,15 @@ fn AWS::Dynamo::tables (%opts) {
     AWS::ddb_list_tables(%opts)
 }
 
+## TransactWriteItems — atomic put/delete across tables. opts: puts (arrayref of
+## { table, item }), deletes (arrayref of { table, key }). Returns the count
+## committed.
+fn AWS::Dynamo::transact (%opts) {
+    AWS::ddb_transact_write_items(%opts)
+}
+
+## DescribeTimeToLive $table — { status, attribute_name }.
+fn AWS::Dynamo::ttl ($table, %opts) {
+    AWS::ddb_describe_time_to_live($table, %opts)
+}
+

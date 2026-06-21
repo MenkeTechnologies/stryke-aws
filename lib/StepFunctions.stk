@@ -1,0 +1,23 @@
+## lib/StepFunctions.stk — `use AWS::StepFunctions`
+##
+## Wraps `AWS::sfn_*` from the cdylib.
+
+package AWS::StepFunctions
+
+use AWS
+
+## ListStateMachines — a list of { name, arn, type, creation_date } hashrefs.
+fn AWS::StepFunctions::list (%opts) {
+    AWS::sfn_list_state_machines(%opts)
+}
+
+## StartExecution of $state_machine_arn. opts: name, input (hashref or string).
+## Returns { execution_arn, start_date }.
+fn AWS::StepFunctions::start ($state_machine_arn, %opts) {
+    AWS::sfn_start_execution($state_machine_arn, %opts)
+}
+
+## DescribeExecution $execution_arn — { status, name, start_date, … }.
+fn AWS::StepFunctions::describe ($execution_arn, %opts) {
+    AWS::sfn_describe_execution($execution_arn, %opts)
+}

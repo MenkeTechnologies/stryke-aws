@@ -372,6 +372,292 @@ fn AWS::cloudwatch_list_metrics (%opts) {
     @{ AWS::_decode("cloudwatch_list_metrics", aws__cloudwatch_list_metrics(to_json($r)))->{metrics} }
 }
 
+# ── S3 versions / location / tagging ────────────────────────────────
+
+## List object versions under $bucket. opts: prefix. Returns
+## { versions => [...], delete_markers => [...] }.
+fn AWS::s3_list_object_versions ($bucket, %opts) {
+    val $r = AWS::_req({ bucket => $bucket, prefix => $opts{prefix} }, \%opts)
+    AWS::_decode("s3_list_object_versions", aws__s3_list_object_versions(to_json($r)))
+}
+
+## GetBucketLocation — returns { bucket, location_constraint, region }. An
+## empty constraint resolves to us-east-1.
+fn AWS::s3_get_bucket_location ($bucket, %opts) {
+    val $r = AWS::_req({ bucket => $bucket }, \%opts)
+    AWS::_decode("s3_get_bucket_location", aws__s3_get_bucket_location(to_json($r)))
+}
+
+## GetBucketTagging — returns the bucket's tag set as a { key => value } hashref.
+fn AWS::s3_get_bucket_tagging ($bucket, %opts) {
+    val $r = AWS::_req({ bucket => $bucket }, \%opts)
+    AWS::_decode("s3_get_bucket_tagging", aws__s3_get_bucket_tagging(to_json($r)))->{tags}
+}
+
+# ── DynamoDB transactions / TTL ─────────────────────────────────────
+
+## TransactWriteItems — atomic put/delete across tables. opts: puts (arrayref of
+## { table, item } hashrefs), deletes (arrayref of { table, key } hashrefs).
+## Returns the count of write actions committed.
+fn AWS::ddb_transact_write_items (%opts) {
+    val $r = AWS::_req({ puts => $opts{puts}, deletes => $opts{deletes} }, \%opts)
+    AWS::_decode("ddb_transact_write_items", aws__ddb_transact_write_items(to_json($r)))->{written}
+}
+
+## DescribeTimeToLive $table — { status, attribute_name }.
+fn AWS::ddb_describe_time_to_live ($table, %opts) {
+    val $r = AWS::_req({ table => $table }, \%opts)
+    AWS::_decode("ddb_describe_time_to_live", aws__ddb_describe_time_to_live(to_json($r)))
+}
+
+# ── SQS attributes / visibility ─────────────────────────────────────
+
+## SetQueueAttributes on $queue_url from an $attributes { name => value } hashref.
+## Returns 1 on success.
+fn AWS::sqs_set_queue_attributes ($queue_url, $attributes, %opts) {
+    die "AWS::sqs_set_queue_attributes: attributes must be hashref" unless ref($attributes) eq "HASH"
+    val $r = AWS::_req({ queue_url => $queue_url, attributes => $attributes }, \%opts)
+    AWS::_decode("sqs_set_queue_attributes", aws__sqs_set_queue_attributes(to_json($r)))->{ok} ? 1 : 0
+}
+
+## ChangeMessageVisibility for a received message. Returns 1 on success.
+fn AWS::sqs_change_message_visibility ($queue_url, $receipt_handle, $visibility_timeout, %opts) {
+    val $r = AWS::_req(
+        { queue_url => $queue_url, receipt_handle => $receipt_handle,
+          visibility_timeout => $visibility_timeout }, \%opts)
+    AWS::_decode("sqs_change_message_visibility", aws__sqs_change_message_visibility(to_json($r)))->{ok} ? 1 : 0
+}
+
+# ── Lambda get_function ─────────────────────────────────────────────
+
+## GetFunction $function — { runtime, handler, arn, memory_size, timeout, … }.
+fn AWS::lambda_get_function ($function, %opts) {
+    val $r = AWS::_req({ function => $function }, \%opts)
+    AWS::_decode("lambda_get_function", aws__lambda_get_function(to_json($r)))
+}
+
+# ── SNS unsubscribe / subscriptions ─────────────────────────────────
+
+## Unsubscribe $subscription_arn. Returns 1 on success.
+fn AWS::sns_unsubscribe ($subscription_arn, %opts) {
+    val $r = AWS::_req({ subscription_arn => $subscription_arn }, \%opts)
+    AWS::_decode("sns_unsubscribe", aws__sns_unsubscribe(to_json($r)))->{unsubscribed} ? 1 : 0
+}
+
+## ListSubscriptionsByTopic $topic_arn — a list of
+## { subscription_arn, protocol, endpoint, owner } hashrefs.
+fn AWS::sns_list_subscriptions_by_topic ($topic_arn, %opts) {
+    val $r = AWS::_req({ topic_arn => $topic_arn }, \%opts)
+    @{ AWS::_decode("sns_list_subscriptions_by_topic",
+        aws__sns_list_subscriptions_by_topic(to_json($r)))->{subscriptions} }
+}
+
+# ── SSM get_parameters (batch) ──────────────────────────────────────
+
+## GetParameters — fetch up to 10 parameters by $names (arrayref or single
+## name). opts: with_decryption. Returns
+## { parameters => [...], invalid_parameters => [...] }.
+fn AWS::ssm_get_parameters ($names, %opts) {
+    val $list = ref($names) eq "ARRAY" ? $names : [$names]
+    val $r = AWS::_req(
+        { names => $list, with_decryption => ($opts{with_decryption} ? \1 : \0) }, \%opts)
+    AWS::_decode("ssm_get_parameters", aws__ssm_get_parameters(to_json($r)))
+}
+
+# ── EC2 ─────────────────────────────────────────────────────────────
+
+## DescribeInstances. opts: instance_ids (arrayref). Returns a list of instance
+## hashrefs ({ instance_id, instance_type, state, private_ip, public_ip, … }).
+fn AWS::ec2_describe_instances (%opts) {
+    val $r = AWS::_req({ instance_ids => $opts{instance_ids} }, \%opts)
+    @{ AWS::_decode("ec2_describe_instances", aws__ec2_describe_instances(to_json($r)))->{instances} }
+}
+
+## StartInstances $instance_ids (arrayref or single id). Returns a list of
+## state-change hashrefs ({ instance_id, current_state, previous_state }).
+fn AWS::ec2_start_instances ($instance_ids, %opts) {
+    val $list = ref($instance_ids) eq "ARRAY" ? $instance_ids : [$instance_ids]
+    val $r = AWS::_req({ instance_ids => $list }, \%opts)
+    @{ AWS::_decode("ec2_start_instances", aws__ec2_start_instances(to_json($r)))->{instances} }
+}
+
+## StopInstances $instance_ids (arrayref or single id). opts: force. Returns a
+## list of state-change hashrefs.
+fn AWS::ec2_stop_instances ($instance_ids, %opts) {
+    val $list = ref($instance_ids) eq "ARRAY" ? $instance_ids : [$instance_ids]
+    val $r = AWS::_req({ instance_ids => $list, force => ($opts{force} ? \1 : \0) }, \%opts)
+    @{ AWS::_decode("ec2_stop_instances", aws__ec2_stop_instances(to_json($r)))->{instances} }
+}
+
+## DescribeSecurityGroups. opts: group_ids (arrayref). Returns a list of
+## { group_id, group_name, description, vpc_id } hashrefs.
+fn AWS::ec2_describe_security_groups (%opts) {
+    val $r = AWS::_req({ group_ids => $opts{group_ids} }, \%opts)
+    @{ AWS::_decode("ec2_describe_security_groups",
+        aws__ec2_describe_security_groups(to_json($r)))->{security_groups} }
+}
+
+## DescribeVpcs. opts: vpc_ids (arrayref). Returns a list of
+## { vpc_id, cidr_block, state, is_default } hashrefs.
+fn AWS::ec2_describe_vpcs (%opts) {
+    val $r = AWS::_req({ vpc_ids => $opts{vpc_ids} }, \%opts)
+    @{ AWS::_decode("ec2_describe_vpcs", aws__ec2_describe_vpcs(to_json($r)))->{vpcs} }
+}
+
+# ── CloudWatch Logs ─────────────────────────────────────────────────
+
+## DescribeLogGroups. opts: prefix. Returns a list of
+## { name, arn, stored_bytes, retention_days } hashrefs.
+fn AWS::logs_describe_log_groups (%opts) {
+    val $r = AWS::_req({ prefix => $opts{prefix} }, \%opts)
+    @{ AWS::_decode("logs_describe_log_groups", aws__logs_describe_log_groups(to_json($r)))->{log_groups} }
+}
+
+## CreateLogGroup named $name. Returns 1 on success.
+fn AWS::logs_create_log_group ($name, %opts) {
+    val $r = AWS::_req({ name => $name }, \%opts)
+    AWS::_decode("logs_create_log_group", aws__logs_create_log_group(to_json($r)))->{created} ? 1 : 0
+}
+
+## FilterLogEvents across a $log_group. opts: filter_pattern, start_time,
+## end_time (epoch ms), limit. Returns a list of
+## { timestamp, message, log_stream } hashrefs.
+fn AWS::logs_filter_log_events ($log_group, %opts) {
+    val $r = AWS::_req(
+        { log_group => $log_group, filter_pattern => $opts{filter_pattern},
+          start_time => $opts{start_time}, end_time => $opts{end_time}, limit => $opts{limit} }, \%opts)
+    @{ AWS::_decode("logs_filter_log_events", aws__logs_filter_log_events(to_json($r)))->{events} }
+}
+
+## GetLogEvents from a single $log_stream in $log_group. opts: limit,
+## start_from_head. Returns a list of { timestamp, message, ingestion_time }.
+fn AWS::logs_get_log_events ($log_group, $log_stream, %opts) {
+    val $r = AWS::_req(
+        { log_group => $log_group, log_stream => $log_stream, limit => $opts{limit},
+          start_from_head => (defined $opts{start_from_head} ? ($opts{start_from_head} ? \1 : \0) : undef) }, \%opts)
+    @{ AWS::_decode("logs_get_log_events", aws__logs_get_log_events(to_json($r)))->{events} }
+}
+
+# ── KMS ─────────────────────────────────────────────────────────────
+
+## ListKeys — a list of { key_id, key_arn } hashrefs.
+fn AWS::kms_list_keys (%opts) {
+    @{ AWS::_decode("kms_list_keys", aws__kms_list_keys(to_json(AWS::_req({}, \%opts))))->{keys} }
+}
+
+## DescribeKey $key_id — { key_id, arn, enabled, description, key_state, key_usage }.
+fn AWS::kms_describe_key ($key_id, %opts) {
+    val $r = AWS::_req({ key_id => $key_id }, \%opts)
+    AWS::_decode("kms_describe_key", aws__kms_describe_key(to_json($r)))
+}
+
+## Encrypt $plaintext under $key_id. Returns the base64 ciphertext string.
+fn AWS::kms_encrypt ($key_id, $plaintext, %opts) {
+    val $r = AWS::_req({ key_id => $key_id, plaintext => $plaintext }, \%opts)
+    AWS::_decode("kms_encrypt", aws__kms_encrypt(to_json($r)))->{ciphertext}
+}
+
+## Decrypt a base64 $ciphertext. opts: key_id. Returns the plaintext (or
+## "base64:..." for non-UTF-8 data).
+fn AWS::kms_decrypt ($ciphertext, %opts) {
+    val $r = AWS::_req({ ciphertext => $ciphertext, key_id => $opts{key_id} }, \%opts)
+    AWS::_decode("kms_decrypt", aws__kms_decrypt(to_json($r)))->{plaintext}
+}
+
+## GenerateDataKey under $key_id. opts: key_spec (default AES_256). Returns
+## { key_id, plaintext (base64), ciphertext (base64) }.
+fn AWS::kms_generate_data_key ($key_id, %opts) {
+    val $r = AWS::_req({ key_id => $key_id, key_spec => $opts{key_spec} }, \%opts)
+    AWS::_decode("kms_generate_data_key", aws__kms_generate_data_key(to_json($r)))
+}
+
+# ── IAM ─────────────────────────────────────────────────────────────
+
+## ListUsers — a list of { user_name, user_id, arn, path, create_date } hashrefs.
+fn AWS::iam_list_users (%opts) {
+    @{ AWS::_decode("iam_list_users", aws__iam_list_users(to_json(AWS::_req({}, \%opts))))->{users} }
+}
+
+## ListRoles — a list of { role_name, role_id, arn, path, create_date } hashrefs.
+fn AWS::iam_list_roles (%opts) {
+    @{ AWS::_decode("iam_list_roles", aws__iam_list_roles(to_json(AWS::_req({}, \%opts))))->{roles} }
+}
+
+## GetUser — the caller's IAM user, or opts.user_name. Returns
+## { user_name, user_id, arn, path }.
+fn AWS::iam_get_user (%opts) {
+    val $r = AWS::_req({ user_name => $opts{user_name} }, \%opts)
+    AWS::_decode("iam_get_user", aws__iam_get_user(to_json($r)))
+}
+
+## ListAttachedRolePolicies $role_name — a list of { policy_name, policy_arn }.
+fn AWS::iam_list_attached_role_policies ($role_name, %opts) {
+    val $r = AWS::_req({ role_name => $role_name }, \%opts)
+    @{ AWS::_decode("iam_list_attached_role_policies",
+        aws__iam_list_attached_role_policies(to_json($r)))->{policies} }
+}
+
+# ── Kinesis ─────────────────────────────────────────────────────────
+
+## ListStreams — a list of stream-name strings.
+fn AWS::kinesis_list_streams (%opts) {
+    @{ AWS::_decode("kinesis_list_streams", aws__kinesis_list_streams(to_json(AWS::_req({}, \%opts))))->{streams} }
+}
+
+## DescribeStream $stream_name — { stream_name, stream_arn, status, shard_count,
+## retention_hours }.
+fn AWS::kinesis_describe_stream ($stream_name, %opts) {
+    val $r = AWS::_req({ stream_name => $stream_name }, \%opts)
+    AWS::_decode("kinesis_describe_stream", aws__kinesis_describe_stream(to_json($r)))
+}
+
+## PutRecord $data into $stream_name with $partition_key. Returns
+## { stream_name, shard_id, sequence_number }.
+fn AWS::kinesis_put_record ($stream_name, $partition_key, $data, %opts) {
+    val $r = AWS::_req(
+        { stream_name => $stream_name, partition_key => $partition_key, data => $data }, \%opts)
+    AWS::_decode("kinesis_put_record", aws__kinesis_put_record(to_json($r)))
+}
+
+# ── ECR ─────────────────────────────────────────────────────────────
+
+## DescribeRepositories. opts: repository_names (arrayref). Returns a list of
+## { repository_name, repository_arn, repository_uri, registry_id } hashrefs.
+fn AWS::ecr_describe_repositories (%opts) {
+    val $r = AWS::_req({ repository_names => $opts{repository_names} }, \%opts)
+    @{ AWS::_decode("ecr_describe_repositories",
+        aws__ecr_describe_repositories(to_json($r)))->{repositories} }
+}
+
+## ListImages in $repository_name — a list of { image_digest, image_tag } hashrefs.
+fn AWS::ecr_list_images ($repository_name, %opts) {
+    val $r = AWS::_req({ repository_name => $repository_name }, \%opts)
+    @{ AWS::_decode("ecr_list_images", aws__ecr_list_images(to_json($r)))->{images} }
+}
+
+# ── Step Functions ──────────────────────────────────────────────────
+
+## ListStateMachines — a list of { name, arn, type, creation_date } hashrefs.
+fn AWS::sfn_list_state_machines (%opts) {
+    @{ AWS::_decode("sfn_list_state_machines",
+        aws__sfn_list_state_machines(to_json(AWS::_req({}, \%opts))))->{state_machines} }
+}
+
+## StartExecution of $state_machine_arn. opts: name, input (hashref or string,
+## serialized to JSON). Returns { execution_arn, start_date }.
+fn AWS::sfn_start_execution ($state_machine_arn, %opts) {
+    val $r = AWS::_req(
+        { state_machine_arn => $state_machine_arn, name => $opts{name}, input => $opts{input} }, \%opts)
+    AWS::_decode("sfn_start_execution", aws__sfn_start_execution(to_json($r)))
+}
+
+## DescribeExecution $execution_arn — { status, name, start_date, stop_date,
+## output, … }.
+fn AWS::sfn_describe_execution ($execution_arn, %opts) {
+    val $r = AWS::_req({ execution_arn => $execution_arn }, \%opts)
+    AWS::_decode("sfn_describe_execution", aws__sfn_describe_execution(to_json($r)))
+}
+
 # ── pure helpers (no AWS) ─────────────────────────────────────────────
 
 ## Parse an ARN into a hashref { partition, service, region, account_id,

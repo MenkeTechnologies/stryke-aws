@@ -12,12 +12,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![stryke](https://img.shields.io/badge/stryke-package-cyan.svg)](https://github.com/MenkeTechnologies/strykelang)
 
-### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS + SNS + SSM + SECRETS + SES + CLOUDWATCH]`
+### `[AWS CLIENT FOR STRYKE // S3 + DYNAMODB + SQS + LAMBDA + STS + SNS + SSM + SECRETS + SES + CLOUDWATCH + LOGS + EC2 + KMS + IAM + KINESIS + ECR + STEP FUNCTIONS]`
 
 > *"The cloud, one stryke pipe away."*
 
 AWS client for stryke — S3, DynamoDB, SQS, Lambda, STS, SNS, SSM
-Parameter Store, and Secrets Manager. Opt-in package
+Parameter Store, Secrets Manager, SES, CloudWatch, CloudWatch Logs, EC2,
+KMS, IAM, Kinesis, ECR, and Step Functions. Opt-in package
 tier, kept out of the stryke core binary so the daily-driver install stays
 slim.
 
@@ -45,7 +46,7 @@ slim.
 ## [0x00] Why this is a package, not a builtin
 
 The official aws-sdk-rust crates pull in tokio, hyper, rustls, and a fat
-chain of smithy / signing / endpoint-resolution support code. Five SDKs
+chain of smithy / signing / endpoint-resolution support code. The 17 SDKs
 combined are way too much to bake into stryke core. This package ships
 them once, opt-in.
 
@@ -80,9 +81,10 @@ make install
 
 The cdylib is dlopened in-process on first `use AWS`. A shared tokio
 runtime + `aws_config::SdkConfig` cache per region is held in `OnceCell`
-— no fork-per-call, no full IMDS/SSO/env creds chain on each call. v0.2.1
-covers S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter Store, and
-Secrets Manager; further ops can be added incrementally.
+— no fork-per-call, no full IMDS/SSO/env creds chain on each call. The
+cdylib covers S3, DynamoDB, SQS, Lambda, STS, SNS, SSM Parameter Store,
+Secrets Manager, SES, CloudWatch, CloudWatch Logs, EC2, KMS, IAM, Kinesis,
+ECR, and Step Functions; further ops can be added incrementally.
 
 ## [0x02] Quick start
 
@@ -150,8 +152,11 @@ AWS::S3::get      $uri, %opts → $body (or $path when output=>"PATH")
 AWS::S3::put      $uri, %opts → \%resp        # data=>$bytes | input=>"PATH"
 AWS::S3::head     $uri, %opts → \%resp
 AWS::S3::rm       $uri, %opts → \%resp
-AWS::S3::presign  $uri, %opts → dies          # deferred in the v0.2.x cdylib
+AWS::S3::presign  $uri, %opts → dies          # deferred in the cdylib
 AWS::S3::buckets  %opts        → @buckets
+AWS::S3::versions $uri, %opts → \%resp        # { versions, delete_markers }
+AWS::S3::location $uri, %opts → \%resp        # { bucket, location_constraint, region }
+AWS::S3::tags     $uri, %opts → \%tags        # { key => value }
 ```
 
 `ls` entries: `{type=>"object", key, size, etag, last_modified,
@@ -167,6 +172,10 @@ AWS::Dynamo::query        $table, %opts → @items   # opts: key_condition, valu
 AWS::Dynamo::scan         $table, %opts → @items   # opts: filter, values, limit
 AWS::Dynamo::describe     $table, %opts → \%info   # status, item_count, key_schema, arn
 AWS::Dynamo::tables       %opts → @names
+AWS::Dynamo::transact     %opts → $count           # opts: puts ([{table,item}]), deletes ([{table,key}]); atomic
+AWS::Dynamo::ttl          $table, %opts → \%info    # { status, attribute_name }
+AWS::Dynamo::batch_write  $table, $rows, %opts → dies   # deferred in the cdylib
+AWS::Dynamo::scan_stream  $table, %opts → dies         # deferred in the cdylib
 ```
 
 `query`/`scan` take a DynamoDB expression plus a `values` hashref of
@@ -183,6 +192,8 @@ AWS::SQS::delete   $queue, $receipt, %opts → { ok: 1 }
 AWS::SQS::list     %opts → @urls                       # prefix filter deferred
 AWS::SQS::purge    $queue, %opts → 1 | 0               # delete all messages
 AWS::SQS::attrs    $queue, %opts → \%attributes        # GetQueueAttributes (All)
+AWS::SQS::set_attrs        $queue, $attributes, %opts → \%resp   # SetQueueAttributes
+AWS::SQS::change_visibility $queue, $receipt, $visibility_timeout, %opts → \%resp
 AWS::SQS::pump     $queue, %opts → $count              # callback + auto-delete on success
 ```
 
@@ -192,9 +203,10 @@ AWS::SQS::pump     $queue, %opts → $count              # callback + auto-delet
 AWS::Lambda::invoke $name, $payload, %opts → \%resp    # { function, status_code, result }
 AWS::Lambda::call   $name, $payload, %opts → $result   # convenience: just .result (undef unless status_code == 200)
 AWS::Lambda::list   %opts → @functions
+AWS::Lambda::get    $name, %opts → \%resp              # GetFunction: { runtime, handler, arn, memory_size, timeout, … }
 ```
 
-`invocation_type => "event"` (fire-and-forget) is deferred in the v0.2.x
+`invocation_type => "event"` (fire-and-forget) is deferred in the
 cdylib.
 
 ### `use AWS::STS`
@@ -211,6 +223,8 @@ AWS::SNS::topics    %opts → @topic_arns
 AWS::SNS::create    $name, %opts → $topic_arn
 AWS::SNS::publish   $message, %opts → $message_id   # opts: topic_arn | target_arn | phone_number, subject
 AWS::SNS::subscribe $topic_arn, $protocol, $endpoint, %opts → $subscription_arn
+AWS::SNS::unsubscribe   $subscription_arn, %opts → 1 | 0
+AWS::SNS::subscriptions $topic_arn, %opts → @{ {subscription_arn, protocol, endpoint, owner} }
 ```
 
 ### `use AWS::SSM` (Parameter Store)
@@ -220,6 +234,7 @@ AWS::SSM::get      $name, %opts → $value             # opts: with_decryption
 AWS::SSM::put      $name, $value, %opts → $version   # opts: type (String|StringList|SecureString), overwrite
 AWS::SSM::by_path  $path, %opts → @{ {name, value} } # opts: recursive, with_decryption
 AWS::SSM::delete   $name, %opts → 1 | 0
+AWS::SSM::get_many $names_or_aref, %opts → \%resp    # GetParameters (≤10): { parameters, invalid_parameters }
 ```
 
 ### `use AWS::Secrets` (Secrets Manager)
@@ -242,6 +257,67 @@ AWS::SES::send $from, $to_or_aref, %opts → $message_id   # opts: subject, body
 ```stryke
 AWS::CloudWatch::put  $namespace, $metric_name, $value, %opts → 1   # opts: unit
 AWS::CloudWatch::list %opts → @{ {namespace, metric_name, dimensions} }   # opts: namespace, metric_name
+```
+
+### `use AWS::Logs` (CloudWatch Logs)
+
+```stryke
+AWS::Logs::groups %opts → @groups                       # DescribeLogGroups; opts: prefix
+AWS::Logs::create $name, %opts → 1                       # CreateLogGroup
+AWS::Logs::filter $log_group, %opts → @events           # opts: filter_pattern, start_time, end_time, limit
+AWS::Logs::events $log_group, $log_stream, %opts → @events   # opts: limit, start_from_head
+```
+
+### `use AWS::EC2`
+
+```stryke
+AWS::EC2::instances       %opts → @instances            # DescribeInstances; opts: instance_ids
+AWS::EC2::start           $ids, %opts → @changes        # StartInstances
+AWS::EC2::stop            $ids, %opts → @changes        # StopInstances; opts: force
+AWS::EC2::security_groups %opts → @groups               # opts: group_ids
+AWS::EC2::vpcs            %opts → @vpcs                  # opts: vpc_ids
+```
+
+### `use AWS::KMS` (Key Management Service)
+
+```stryke
+AWS::KMS::keys     %opts → @{ {key_id, key_arn} }       # ListKeys
+AWS::KMS::describe $key_id, %opts → \%info              # DescribeKey
+AWS::KMS::encrypt  $key_id, $plaintext, %opts → $ciphertext   # base64
+AWS::KMS::decrypt  $ciphertext, %opts → $plaintext      # opts: key_id
+AWS::KMS::data_key $key_id, %opts → { key_id, plaintext, ciphertext }   # opts: key_spec (default AES_256)
+```
+
+### `use AWS::IAM`
+
+```stryke
+AWS::IAM::users         %opts → @users                  # ListUsers
+AWS::IAM::roles         %opts → @roles                  # ListRoles
+AWS::IAM::user          %opts → \%user                  # GetUser; opts: user_name
+AWS::IAM::role_policies $role_name, %opts → @{ {policy_name, policy_arn} }
+```
+
+### `use AWS::Kinesis`
+
+```stryke
+AWS::Kinesis::list     %opts → @stream_names            # ListStreams
+AWS::Kinesis::describe $stream_name, %opts → \%info     # DescribeStream
+AWS::Kinesis::put      $stream_name, $partition_key, $data, %opts → \%resp   # PutRecord
+```
+
+### `use AWS::ECR` (Elastic Container Registry)
+
+```stryke
+AWS::ECR::repositories %opts → @repos                   # DescribeRepositories; opts: repository_names
+AWS::ECR::images       $repository_name, %opts → @{ {image_digest, image_tag} }   # ListImages
+```
+
+### `use AWS::StepFunctions`
+
+```stryke
+AWS::StepFunctions::list     %opts → @{ {name, arn, type, creation_date} }   # ListStateMachines
+AWS::StepFunctions::start    $state_machine_arn, %opts → { execution_arn, start_date }   # opts: name, input
+AWS::StepFunctions::describe $execution_arn, %opts → \%info   # DescribeExecution
 ```
 
 ### Flat extras on `use AWS`
@@ -289,7 +365,8 @@ Each `AWS::*` wrapper builds a JSON args dict and calls a sibling
 is dlopened in-process on first `use AWS` (via stryke's
 `pkg::commands::try_load_ffi_for` resolver hook) and exposes the entry
 points listed in the `[ffi]` exports table in `stryke.toml`, spanning
-STS, S3, DynamoDB, SQS, and Lambda.
+STS, S3, DynamoDB, SQS, Lambda, SNS, SSM, Secrets, SES, CloudWatch,
+CloudWatch Logs, EC2, KMS, IAM, Kinesis, ECR, and Step Functions.
 
 **Persistent state:** a shared tokio runtime + an `aws_config::SdkConfig`
 cache per region held in `OnceCell` — no fork-per-call, no full
@@ -360,12 +437,24 @@ stryke-aws/
   src/
     lib.rs                         # cdylib — aws__* extern "C" exports
   lib/
-    AWS.stk                        # `use AWS` — plumbing + ping
+    AWS.stk                        # `use AWS` — plumbing + ping + flat ops + pure helpers
     S3.stk                         # `use AWS::S3`
     Dynamo.stk                     # `use AWS::Dynamo`
     SQS.stk                        # `use AWS::SQS`
     Lambda.stk                     # `use AWS::Lambda`
     STS.stk                        # `use AWS::STS`
+    SNS.stk                        # `use AWS::SNS`
+    SSM.stk                        # `use AWS::SSM`
+    Secrets.stk                    # `use AWS::Secrets`
+    SES.stk                        # `use AWS::SES`
+    CloudWatch.stk                 # `use AWS::CloudWatch`
+    Logs.stk                       # `use AWS::Logs`
+    EC2.stk                        # `use AWS::EC2`
+    KMS.stk                        # `use AWS::KMS`
+    IAM.stk                        # `use AWS::IAM`
+    Kinesis.stk                    # `use AWS::Kinesis`
+    ECR.stk                        # `use AWS::ECR`
+    StepFunctions.stk              # `use AWS::StepFunctions`
   t/
     test_aws.stk                   # end-to-end (gated on creds + opt-in env vars)
     test_stryke_aws_surface.stk    # wrapper-completeness pin
@@ -383,12 +472,12 @@ stryke-aws/
 
 ## [0x0A] Roadmap
 
-| Shipped (v0.2.x) | Later |
+| Shipped | Later |
 |---|---|
-| S3 (incl. head), DynamoDB (incl. query/scan/delete/describe), SQS (incl. purge/attrs), Lambda, STS (incl. assume_role) | CloudWatch Logs, EC2, IAM, KMS, Secrets Manager |
-| In-process cdylib + persistent SdkConfig cache | Deferred ops: DDB batch_write/scan_stream, S3 presign |
-| Plain JSON DDB | Typed-set passthrough, optimistic-locking helpers |
-| Buffered S3 put | Streaming multipart upload |
+| S3 (incl. head/versions/location/tags), DynamoDB (incl. query/scan/delete/describe/transact/ttl), SQS (incl. purge/attrs/set_attrs/change_visibility), Lambda (incl. get), STS (incl. assume_role) | Deferred ops: DDB batch_write/scan_stream, S3 presign, Lambda invocation_type=event |
+| SNS, SSM, Secrets Manager, SES, CloudWatch, CloudWatch Logs, EC2, KMS, IAM, Kinesis, ECR, Step Functions | Typed-set passthrough, optimistic-locking helpers |
+| In-process cdylib + persistent SdkConfig cache | Streaming multipart upload |
+| Plain JSON DDB; buffered S3 put | |
 
 ## [0xFF] License
 

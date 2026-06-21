@@ -30,3 +30,8 @@ fn AWS::Lambda::list (%opts) {
     AWS::lambda_list_functions(%opts)
 }
 
+## GetFunction $name — { runtime, handler, arn, memory_size, timeout, … }.
+fn AWS::Lambda::get ($name, %opts) {
+    AWS::lambda_get_function($name, %opts)
+}
+

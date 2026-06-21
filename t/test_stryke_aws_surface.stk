@@ -25,6 +25,13 @@ use AWS::SSM
 use AWS::Secrets
 use AWS::SES
 use AWS::CloudWatch
+use AWS::EC2
+use AWS::Logs
+use AWS::KMS
+use AWS::IAM
+use AWS::Kinesis
+use AWS::ECR
+use AWS::StepFunctions
 
 # ── AWS.stk ──────────────────────────────────────────────
 assert_ok exists &AWS::version, "AWS::version exists"
@@ -135,6 +142,98 @@ assert_ok exists &AWS::CloudWatch::list, "AWS::CloudWatch::list exists"
 
 assert_ok exists &AWS::ddb_batch_get_item, "AWS::ddb_batch_get_item exists"
 assert_ok exists &AWS::ddb_batch_write_item, "AWS::ddb_batch_write_item exists"
+
+# ── flat extras: S3 versions/location/tagging, DDB transact/ttl, SQS, Lambda, SNS, SSM ──
+assert_ok exists &AWS::s3_list_object_versions, "AWS::s3_list_object_versions exists"
+assert_ok exists &AWS::s3_get_bucket_location, "AWS::s3_get_bucket_location exists"
+assert_ok exists &AWS::s3_get_bucket_tagging, "AWS::s3_get_bucket_tagging exists"
+assert_ok exists &AWS::ddb_transact_write_items, "AWS::ddb_transact_write_items exists"
+assert_ok exists &AWS::ddb_describe_time_to_live, "AWS::ddb_describe_time_to_live exists"
+assert_ok exists &AWS::sqs_set_queue_attributes, "AWS::sqs_set_queue_attributes exists"
+assert_ok exists &AWS::sqs_change_message_visibility, "AWS::sqs_change_message_visibility exists"
+assert_ok exists &AWS::lambda_get_function, "AWS::lambda_get_function exists"
+assert_ok exists &AWS::sns_unsubscribe, "AWS::sns_unsubscribe exists"
+assert_ok exists &AWS::sns_list_subscriptions_by_topic, "AWS::sns_list_subscriptions_by_topic exists"
+assert_ok exists &AWS::ssm_get_parameters, "AWS::ssm_get_parameters exists"
+
+# ── EC2 flat + EC2.stk ──
+assert_ok exists &AWS::ec2_describe_instances, "AWS::ec2_describe_instances exists"
+assert_ok exists &AWS::ec2_start_instances, "AWS::ec2_start_instances exists"
+assert_ok exists &AWS::ec2_stop_instances, "AWS::ec2_stop_instances exists"
+assert_ok exists &AWS::ec2_describe_security_groups, "AWS::ec2_describe_security_groups exists"
+assert_ok exists &AWS::ec2_describe_vpcs, "AWS::ec2_describe_vpcs exists"
+assert_ok exists &AWS::EC2::instances, "AWS::EC2::instances exists"
+assert_ok exists &AWS::EC2::start, "AWS::EC2::start exists"
+assert_ok exists &AWS::EC2::stop, "AWS::EC2::stop exists"
+assert_ok exists &AWS::EC2::security_groups, "AWS::EC2::security_groups exists"
+assert_ok exists &AWS::EC2::vpcs, "AWS::EC2::vpcs exists"
+
+# ── CloudWatch Logs flat + Logs.stk ──
+assert_ok exists &AWS::logs_describe_log_groups, "AWS::logs_describe_log_groups exists"
+assert_ok exists &AWS::logs_create_log_group, "AWS::logs_create_log_group exists"
+assert_ok exists &AWS::logs_filter_log_events, "AWS::logs_filter_log_events exists"
+assert_ok exists &AWS::logs_get_log_events, "AWS::logs_get_log_events exists"
+assert_ok exists &AWS::Logs::groups, "AWS::Logs::groups exists"
+assert_ok exists &AWS::Logs::create, "AWS::Logs::create exists"
+assert_ok exists &AWS::Logs::filter, "AWS::Logs::filter exists"
+assert_ok exists &AWS::Logs::events, "AWS::Logs::events exists"
+
+# ── KMS flat + KMS.stk ──
+assert_ok exists &AWS::kms_list_keys, "AWS::kms_list_keys exists"
+assert_ok exists &AWS::kms_describe_key, "AWS::kms_describe_key exists"
+assert_ok exists &AWS::kms_encrypt, "AWS::kms_encrypt exists"
+assert_ok exists &AWS::kms_decrypt, "AWS::kms_decrypt exists"
+assert_ok exists &AWS::kms_generate_data_key, "AWS::kms_generate_data_key exists"
+assert_ok exists &AWS::KMS::keys, "AWS::KMS::keys exists"
+assert_ok exists &AWS::KMS::describe, "AWS::KMS::describe exists"
+assert_ok exists &AWS::KMS::encrypt, "AWS::KMS::encrypt exists"
+assert_ok exists &AWS::KMS::decrypt, "AWS::KMS::decrypt exists"
+assert_ok exists &AWS::KMS::data_key, "AWS::KMS::data_key exists"
+
+# ── IAM flat + IAM.stk ──
+assert_ok exists &AWS::iam_list_users, "AWS::iam_list_users exists"
+assert_ok exists &AWS::iam_list_roles, "AWS::iam_list_roles exists"
+assert_ok exists &AWS::iam_get_user, "AWS::iam_get_user exists"
+assert_ok exists &AWS::iam_list_attached_role_policies, "AWS::iam_list_attached_role_policies exists"
+assert_ok exists &AWS::IAM::users, "AWS::IAM::users exists"
+assert_ok exists &AWS::IAM::roles, "AWS::IAM::roles exists"
+assert_ok exists &AWS::IAM::user, "AWS::IAM::user exists"
+assert_ok exists &AWS::IAM::role_policies, "AWS::IAM::role_policies exists"
+
+# ── Kinesis flat + Kinesis.stk ──
+assert_ok exists &AWS::kinesis_list_streams, "AWS::kinesis_list_streams exists"
+assert_ok exists &AWS::kinesis_describe_stream, "AWS::kinesis_describe_stream exists"
+assert_ok exists &AWS::kinesis_put_record, "AWS::kinesis_put_record exists"
+assert_ok exists &AWS::Kinesis::list, "AWS::Kinesis::list exists"
+assert_ok exists &AWS::Kinesis::describe, "AWS::Kinesis::describe exists"
+assert_ok exists &AWS::Kinesis::put, "AWS::Kinesis::put exists"
+
+# ── ECR flat + ECR.stk ──
+assert_ok exists &AWS::ecr_describe_repositories, "AWS::ecr_describe_repositories exists"
+assert_ok exists &AWS::ecr_list_images, "AWS::ecr_list_images exists"
+assert_ok exists &AWS::ECR::repositories, "AWS::ECR::repositories exists"
+assert_ok exists &AWS::ECR::images, "AWS::ECR::images exists"
+
+# ── Step Functions flat + StepFunctions.stk ──
+assert_ok exists &AWS::sfn_list_state_machines, "AWS::sfn_list_state_machines exists"
+assert_ok exists &AWS::sfn_start_execution, "AWS::sfn_start_execution exists"
+assert_ok exists &AWS::sfn_describe_execution, "AWS::sfn_describe_execution exists"
+assert_ok exists &AWS::StepFunctions::list, "AWS::StepFunctions::list exists"
+assert_ok exists &AWS::StepFunctions::start, "AWS::StepFunctions::start exists"
+assert_ok exists &AWS::StepFunctions::describe, "AWS::StepFunctions::describe exists"
+
+# ── S3.stk / Dynamo.stk / SQS.stk / Lambda.stk / SNS.stk / SSM.stk extras ──
+assert_ok exists &AWS::S3::versions, "AWS::S3::versions exists"
+assert_ok exists &AWS::S3::location, "AWS::S3::location exists"
+assert_ok exists &AWS::S3::tags, "AWS::S3::tags exists"
+assert_ok exists &AWS::Dynamo::transact, "AWS::Dynamo::transact exists"
+assert_ok exists &AWS::Dynamo::ttl, "AWS::Dynamo::ttl exists"
+assert_ok exists &AWS::SQS::set_attrs, "AWS::SQS::set_attrs exists"
+assert_ok exists &AWS::SQS::change_visibility, "AWS::SQS::change_visibility exists"
+assert_ok exists &AWS::Lambda::get, "AWS::Lambda::get exists"
+assert_ok exists &AWS::SNS::unsubscribe, "AWS::SNS::unsubscribe exists"
+assert_ok exists &AWS::SNS::subscriptions, "AWS::SNS::subscriptions exists"
+assert_ok exists &AWS::SSM::get_many, "AWS::SSM::get_many exists"
 
 # ── pure parse/build helpers ──
 assert_ok exists &AWS::parse_arn, "AWS::parse_arn exists"
