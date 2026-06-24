@@ -24,6 +24,8 @@ slim.
 
 ### [`strykelang`](https://github.com/MenkeTechnologies/strykelang) &middot; [`MenkeTechnologiesMeta`](https://github.com/MenkeTechnologies/MenkeTechnologiesMeta) · [`stryke-gcp`](https://github.com/MenkeTechnologies/stryke-gcp) · [`stryke-docker`](https://github.com/MenkeTechnologies/stryke-docker) · [`stryke-k8s`](https://github.com/MenkeTechnologies/stryke-k8s) · [`stryke-demo`](https://github.com/MenkeTechnologies/stryke-demo)
 
+### [`Read the Docs`](https://menketechnologies.github.io/stryke-aws/) &middot; [`Engineering Report`](https://menketechnologies.github.io/stryke-aws/report.html)
+
 ---
 
 ## Table of Contents
