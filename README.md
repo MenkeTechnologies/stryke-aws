@@ -36,7 +36,7 @@ slim.
 - [\[0x03\] API reference](#0x03-api-reference)
 - [\[0x04\] FFI layer](#0x04-ffi-layer)
 - [\[0x05\] DynamoDB type encoding](#0x05-dynamodb-type-encoding)
-- [\[0x06\] LocalStack / MinIO](#0x06-localstack-minio)
+- [\[0x06\] LocalStack / MinIO](#0x06-localstack--minio)
 - [\[0x07\] Tests](#0x07-tests)
 - [\[0x08\] Dev workflow](#0x08-dev-workflow)
 - [\[0x09\] Layout](#0x09-layout)
@@ -117,7 +117,7 @@ p for AWS::Dynamo::tables()
 
 # SQS — send / long-poll / pump.
 AWS::SQS::send $queue_url, "payload"
-val @msgs = AWS::SQS::receive $queue_url, max => 10, wait => 20
+val @msgs = AWS::SQS::receive $queue_url, max => 10
 
 # pump = receive → callback → delete-on-success
 AWS::SQS::pump $queue_url, iterations => 5, callback => fn ($m) {
@@ -170,7 +170,7 @@ storage_class}` or `{type=>"prefix", key}` when `delimiter` is set.
 
 ```stryke
 AWS::Dynamo::get          $table, $key, %opts → \%item | undef
-AWS::Dynamo::put          $table, $item, %opts → { ok: 1 }
+AWS::Dynamo::put          $table, $item, %opts → 1 | 0
 AWS::Dynamo::delete       $table, $key, %opts → 1 | 0
 AWS::Dynamo::query        $table, %opts → @items   # opts: key_condition, values, names, filter, index, limit
 AWS::Dynamo::scan         $table, %opts → @items   # opts: filter, values, limit
@@ -192,14 +192,14 @@ maps/lists round-trip recursively; binary attributes come back as
 ### `use AWS::SQS`
 
 ```stryke
-AWS::SQS::send     $queue, $body, %opts → \%resp       # opts: delay_seconds, dedup_id, group_id
-AWS::SQS::receive  $queue, %opts → @messages           # opts: max, wait, visibility
-AWS::SQS::delete   $queue, $receipt, %opts → { ok: 1 }
+AWS::SQS::send     $queue, $body, %opts → $message_id  # delay_seconds / dedup_id / group_id deferred (die)
+AWS::SQS::receive  $queue, %opts → @messages           # opts: max; wait / visibility deferred (die)
+AWS::SQS::delete   $queue, $receipt, %opts → { deleted: 1 | 0 }
 AWS::SQS::list     %opts → @urls                       # prefix filter deferred
 AWS::SQS::purge    $queue, %opts → 1 | 0               # delete all messages
 AWS::SQS::attrs    $queue, %opts → \%attributes        # GetQueueAttributes (All)
-AWS::SQS::set_attrs        $queue, $attributes, %opts → \%resp   # SetQueueAttributes
-AWS::SQS::change_visibility $queue, $receipt, $visibility_timeout, %opts → \%resp
+AWS::SQS::set_attrs        $queue, $attributes, %opts → 1 | 0    # SetQueueAttributes
+AWS::SQS::change_visibility $queue, $receipt, $visibility_timeout, %opts → 1 | 0
 AWS::SQS::pump     $queue, %opts → $count              # callback + auto-delete on success
 ```
 
@@ -421,6 +421,14 @@ s test t/                                           # creds-aware end-to-end
 export STRYKE_AWS_TEST_BUCKET=my-test-bucket
 export STRYKE_AWS_TEST_TABLE=stryke-aws-demo        # PK `id: S`
 export STRYKE_AWS_TEST_QUEUE=https://sqs.us-east-1.amazonaws.com/.../my-q
+
+# CloudWatch Logs PutLogEvents round-trip (both must be set, group + stream must exist):
+export STRYKE_AWS_TEST_LOG_GROUP=/stryke-aws/test
+export STRYKE_AWS_TEST_LOG_STREAM=test-stream
+
+# Opt into the create/delete lifecycle tests (creates + tears down a real
+# bucket and DynamoDB table — off by default so a shared account is safe):
+export STRYKE_AWS_TEST_MUTATE=1
 s test t/
 ```
 
@@ -484,7 +492,7 @@ stryke-aws/
 
 | Shipped | Later |
 |---|---|
-| S3 (incl. head/versions/location/tags), DynamoDB (incl. query/scan/delete/describe/transact/ttl), SQS (incl. purge/attrs/set_attrs/change_visibility), Lambda (incl. get), STS (incl. assume_role) | Deferred ops: DDB batch_write/scan_stream, S3 presign, Lambda invocation_type=event |
+| S3 (incl. head/versions/location/tags), DynamoDB (incl. query/scan/delete/describe/transact/ttl), SQS (incl. purge/attrs/set_attrs/change_visibility), Lambda (incl. get), STS (incl. assume_role) | Deferred ops: DDB batch_write/scan_stream, S3 presign, Lambda invocation_type=event, SQS send delay_seconds/dedup_id/group_id, SQS receive wait/visibility, SQS list prefix |
 | SNS, SSM, Secrets Manager, SES, CloudWatch, CloudWatch Logs, EC2, KMS, IAM, Kinesis, ECR, Step Functions | Typed-set passthrough, optimistic-locking helpers |
 | In-process cdylib + persistent SdkConfig cache | Streaming multipart upload |
 | Plain JSON DDB; buffered S3 put | |
