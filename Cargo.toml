@@ -15,24 +15,35 @@ crate-type = ["cdylib"]
 path = "src/lib.rs"
 
 [dependencies]
+# `rustls` is a DEFAULT feature of every aws-sdk-* crate and it selects the LEGACY
+# TLS stack: aws-sdk-*/rustls -> aws-smithy-runtime/tls-rustls ->
+# aws-smithy-http-client/legacy-rustls-ring -> rustls 0.21 + hyper-rustls 0.24 ->
+# rustls-webpki 0.101.7, which is GHSA-82j2-j2ch-gfr8 (HIGH, DoS via panic on a
+# malformed CRL; patched in 0.103.13) and GHSA-xgp8-3hg3-c2mh. HTTPS does not need
+# it: `default-https-client` — also a default, and kept below — routes through
+# aws-smithy-http-client/rustls-aws-lc on rustls 0.23. Verified with
+# `cargo tree -e features`, which shows both edges arriving at the same crate.
+# Updating does not help: the legacy path is still selected at
+# aws-smithy-http-client 1.4.0, the latest. Each line below is that crate's own
+# default list with `rustls` removed, so nothing else changes.
 aws-config = { version = "1", features = ["behavior-version-latest"] }
-aws-sdk-s3 = "1"
-aws-sdk-dynamodb = "1"
-aws-sdk-sqs = "1"
-aws-sdk-lambda = "1"
-aws-sdk-sts = "1"
-aws-sdk-sns = "1"
-aws-sdk-ssm = "1"
-aws-sdk-secretsmanager = "1"
-aws-sdk-cloudwatch = "1"
-aws-sdk-cloudwatchlogs = "1"
-aws-sdk-sesv2 = "1"
-aws-sdk-ec2 = "1"
-aws-sdk-kms = "1"
-aws-sdk-iam = "1"
-aws-sdk-kinesis = "1"
-aws-sdk-ecr = "1"
-aws-sdk-sfn = "1"
+aws-sdk-s3 = { version = "1", default-features = false, features = ["sigv4a", "http-1x", "default-https-client", "rt-tokio"] }
+aws-sdk-dynamodb = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-sqs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-lambda = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-sts = { version = "1", default-features = false, features = ["sigv4a", "default-https-client", "rt-tokio"] }
+aws-sdk-sns = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-ssm = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-secretsmanager = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-cloudwatch = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-cloudwatchlogs = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-sesv2 = { version = "1", default-features = false, features = ["sigv4a", "default-https-client", "rt-tokio"] }
+aws-sdk-ec2 = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-kms = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-iam = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-kinesis = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-ecr = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
+aws-sdk-sfn = { version = "1", default-features = false, features = ["default-https-client", "rt-tokio"] }
 aws-types = "1"
 aws-smithy-types = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std", "io-util", "fs"] }
